@@ -83,6 +83,25 @@ export function getLivingDexCoordinates(
   }
 }
 
+export function getLivingDexBoxName(
+  boxIndex: number,
+  hasMons: boolean = false,
+  boxSlots: number = 120
+): string | null {
+  const livingDexBoxes = Math.ceil(NationalDexMax / boxSlots)
+  if (boxIndex < livingDexBoxes) {
+    const start = (boxIndex * boxSlots + 1).toString().padStart(4, '0')
+    const end = Math.min((boxIndex + 1) * boxSlots, NationalDexMax)
+      .toString()
+      .padStart(4, '0')
+    return `${start} - ${end}`
+  }
+  if (hasMons) {
+    return `Overflow ${boxIndex - livingDexBoxes + 1}`
+  }
+  return null
+}
+
 function sortByDexNum(a: SortablePkmFields, b: SortablePkmFields) {
   return a.nationalDex - b.nationalDex
 }

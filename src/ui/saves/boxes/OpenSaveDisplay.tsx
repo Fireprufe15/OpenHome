@@ -13,6 +13,7 @@ import AttributeRowExpand from '@openhome-ui/components/AttributeRowExpand'
 import { Item, OpenHomeCtxMenu, Submenu } from '@openhome-ui/components/context-menu'
 import PromptDialog from '@openhome-ui/components/dialog/PromptDialog'
 import Fallback from '@openhome-ui/components/Fallback'
+import { MenuIcon } from '@openhome-ui/components/Icons'
 import OhoFlex from '@openhome-ui/components/OhoFlex'
 import PokemonIcon from '@openhome-ui/components/PokemonIcon'
 import SearchFields from '@openhome-ui/components/search/SearchFields'
@@ -30,7 +31,7 @@ import {
 } from '@openhome-ui/state-zustand/banks-and-boxes/store'
 import { EMPTY_SLOT, MonLocation, useSaves } from '@openhome-ui/state/saves'
 import { colorIsDark } from '@openhome-ui/util/color'
-import { Button, Dialog, Flex, Grid, Separator } from '@radix-ui/themes'
+import { Button, Dialog, DropdownMenu, Flex, Grid, Separator } from '@radix-ui/themes'
 import { useContext, useMemo, useState } from 'react'
 import { MdClose } from 'react-icons/md'
 import useMultiSelect from '../../state/drag-and-drop/useMultiSelect'
@@ -405,10 +406,11 @@ type SaveHeaderProps = { save: SAV; setDetailsModal: (open: boolean) => void }
 function SaveHeader({ save, setDetailsModal }: SaveHeaderProps) {
   const savesManager = useSaves()
   const backend = useBackend()
-  const { banks } = useBanksAndBoxes()
+  const { banks, getCurrentBank } = useBanksAndBoxes()
 
   const currentBoxMonCount = save.getBoxMonCount(save.currentPCBox)
   const totalMonCount = save.getPcMonCount()
+  const currentBank = getCurrentBank()
 
   const contextElements = [
     Item.label('Details...').action(() => setDetailsModal(true)),
@@ -461,6 +463,70 @@ function SaveHeader({ save, setDetailsModal }: SaveHeaderProps) {
             {save.gameNameFull}
           </div>
           {save?.name}
+        </div>
+        <div className="save-menu-buttons-right">
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger>
+              <Button className="mini-button" variant="outline" color="gray" title="Save Actions & Transfer to Bank">
+                <MenuIcon />
+              </Button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Content>
+              <DropdownMenu.Item onClick={() => setDetailsModal(true)}>
+                Details...
+              </DropdownMenu.Item>
+              <DropdownMenu.Item onClick={() => backend.openDirectory(save.filePath.dir)}>
+                Open file location
+              </DropdownMenu.Item>
+              <DropdownMenu.Separator />
+              <DropdownMenu.Item
+                onClick={() => savesManager.moveMissingToBank(save, currentBank.index, false)}
+              >
+                Transfer Missing to {bankNameOrDefault(currentBank)} (All Missing)
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                onClick={() => savesManager.moveMissingToBank(save, currentBank.index, true)}
+              >
+                Transfer Missing to {bankNameOrDefault(currentBank)} (Only 2+ in Save)
+              </DropdownMenu.Item>
+              {banks.length > 1 && (
+                <DropdownMenu.Sub>
+                  <DropdownMenu.SubTrigger>Transfer Missing to Another Bank...</DropdownMenu.SubTrigger>
+                  <DropdownMenu.SubContent>
+                    {banks.map((bank) => (
+                      <DropdownMenu.Sub key={bank.index}>
+                        <DropdownMenu.SubTrigger>{bankNameOrDefault(bank)}</DropdownMenu.SubTrigger>
+                        <DropdownMenu.SubContent>
+                          <DropdownMenu.Item
+                            onClick={() => savesManager.moveMissingToBank(save, bank.index, false)}
+                          >
+                            All Missing Species
+                          </DropdownMenu.Item>
+                          <DropdownMenu.Item
+                            onClick={() => savesManager.moveMissingToBank(save, bank.index, true)}
+                          >
+                            Only Duplicates (2+ in Save)
+                          </DropdownMenu.Item>
+                        </DropdownMenu.SubContent>
+                      </DropdownMenu.Sub>
+                    ))}
+                  </DropdownMenu.SubContent>
+                </DropdownMenu.Sub>
+              )}
+              <DropdownMenu.Separator />
+              <DropdownMenu.Sub>
+                <DropdownMenu.SubTrigger>Move All to Bank...</DropdownMenu.SubTrigger>
+                <DropdownMenu.SubContent>
+                  <DropdownMenu.Item onClick={() => savesManager.moveBoxToBank(save)}>
+                    This Box ({currentBoxMonCount})
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item onClick={() => savesManager.moveSaveToBank(save)}>
+                    Entire Save ({totalMonCount})
+                  </DropdownMenu.Item>
+                </DropdownMenu.SubContent>
+              </DropdownMenu.Sub>
+            </DropdownMenu.Content>
+          </DropdownMenu.Root>
         </div>
       </div>
     </OpenHomeCtxMenu>

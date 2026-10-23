@@ -1,7 +1,10 @@
 import { useGamepadNavigation } from '../state/GamepadNavigationContext'
 
 export default function ControllerHudBar() {
-  const { heldPayload, activePane, bankZoomed } = useGamepadNavigation()
+  const { heldPayload, activePane, bankZoomed, activeCursor, quickMenuOpen } =
+    useGamepadNavigation()
+
+  const isHeaderFocused = activeCursor.row === -1
 
   return (
     <div className="deck-hud-bar">
@@ -17,12 +20,26 @@ export default function ControllerHudBar() {
 
       <div className="deck-hud-item">
         <span className="deck-glyph deck-glyph-a">A</span>
-        <span>{heldPayload ? 'Place Pokémon' : 'Pick Up'}</span>
+        <span>
+          {quickMenuOpen || isHeaderFocused
+            ? 'Run Action'
+            : heldPayload
+              ? 'Place Pokémon'
+              : 'Pick Up'}
+        </span>
       </div>
 
       <div className="deck-hud-item">
         <span className="deck-glyph deck-glyph-b">B</span>
-        <span>{heldPayload ? 'Drop / Cancel' : 'Deselect'}</span>
+        <span>
+          {quickMenuOpen
+            ? 'Close Menu'
+            : isHeaderFocused
+              ? 'Back to Grid'
+              : heldPayload
+                ? 'Drop / Cancel'
+                : 'Deselect'}
+        </span>
       </div>
 
       <div className="deck-hud-item">
@@ -33,6 +50,11 @@ export default function ControllerHudBar() {
       <div className="deck-hud-item">
         <span className="deck-glyph deck-glyph-y">Y</span>
         <span>Select / Lasso</span>
+      </div>
+
+      <div className="deck-hud-item">
+        <span className="deck-glyph deck-glyph-pill">L3 / ↑</span>
+        <span>Living Dex & Transfer</span>
       </div>
 
       {activePane === 'bank' && (

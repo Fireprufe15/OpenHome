@@ -47,18 +47,25 @@ export default function DeckHomeView() {
     setDetailsModalMon,
     saveModalOpen,
     setSaveModalOpen,
+    quickMenuOpen,
+    setQuickMenuOpen,
+    quickMenuIndex,
+    setQuickMenuIndex,
+    quickMenuItems,
+    executeQuickMenuItem,
+    statusMessage,
     toggleDeckMode,
     releaseActiveOrSelectedMons,
+    triggerBankPaneAction,
   } = useGamepadNavigation()
 
   const savesManager = useSaves()
   const { allOpenSaves } = savesManager
   const banksAndBoxes = useBanksAndBoxes()
-  const { banks, getCurrentBank, getCurrentBox, switchToBank, sortHomeBox } = banksAndBoxes
+  const { banks, getCurrentBank, switchToBank } = banksAndBoxes
 
   const activeSave: SAV | undefined = allOpenSaves[activeSaveIndex] ?? allOpenSaves[0]
   const currentBank = getCurrentBank()
-  const currentBox = getCurrentBox()
 
   return (
     <div className="deck-container">
@@ -89,13 +96,35 @@ export default function DeckHomeView() {
             </select>
           )}
           {heldPayload && (
-            <span className="deck-badge" style={{ background: 'rgba(244, 63, 94, 0.25)', color: '#fda4af', borderColor: '#f43f5e' }}>
-              Holding: {heldPayload.multiLocations ? `${heldPayload.multiLocations.length} Pokémon` : heldPayload.mon.nickname}
+            <span
+              className="deck-badge"
+              style={{
+                background: 'rgba(244, 63, 94, 0.25)',
+                color: '#fda4af',
+                borderColor: '#f43f5e',
+              }}
+            >
+              Holding:{' '}
+              {heldPayload.multiLocations
+                ? `${heldPayload.multiLocations.length} Pokémon`
+                : heldPayload.mon.nickname}
             </span>
           )}
+          {statusMessage && <span className="deck-status-toast">{statusMessage}</span>}
         </div>
 
         <div className="deck-top-bar-right">
+          <button
+            className="deck-top-btn active"
+            onClick={() => {
+              setQuickMenuIndex(0)
+              setQuickMenuOpen(true)
+            }}
+            title="Open Controller Actions Menu (L3 / M)"
+          >
+            ⚡ Actions (L3)
+          </button>
+
           <button
             className={`deck-top-btn ${bankZoomed ? 'active' : ''}`}
             onClick={toggleBankZoom}
@@ -118,10 +147,10 @@ export default function DeckHomeView() {
 
           <button
             className="deck-top-btn"
-            onClick={() => void sortHomeBox(currentBox.index, 'pokedex')}
-            title="Sort Current Bank Box by National Dex"
+            onClick={() => void triggerBankPaneAction(0)}
+            title="Sort Entire Bank by National Living Dex (#0001–#1025, 120 slots/box)"
           >
-            Sort Box
+            Sort Living Dex
           </button>
 
           <button
@@ -200,6 +229,43 @@ export default function DeckHomeView() {
       </Fallback>
 
       <SavesModal open={saveModalOpen} onClose={() => setSaveModalOpen(false)} />
+
+      {quickMenuOpen && (
+        <div
+          className="deck-quick-menu-backdrop"
+          onClick={() => setQuickMenuOpen(false)}
+        >
+          <div
+            className="deck-quick-menu-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="deck-quick-menu-header">
+              <span>Controller Actions Menu</span>
+              <span className="deck-key-hint">D-Pad ↑/↓ • A Confirm • B Close</span>
+            </div>
+            <div className="deck-quick-menu-list">
+              {quickMenuItems.map((item, idx) => {
+                const isSelected = idx === quickMenuIndex
+                return (
+                  <button
+                    key={item.id}
+                    className={`deck-quick-menu-item ${isSelected ? 'focused' : ''} ${item.disabled ? 'disabled' : ''}`}
+                    disabled={item.disabled}
+                    onMouseEnter={() => setQuickMenuIndex(idx)}
+                    onClick={() => executeQuickMenuItem(idx)}
+                  >
+                    <div className="deck-quick-menu-item-title">
+                      <span>{item.label}</span>
+                      {isSelected && <span className="deck-glyph deck-glyph-a">A</span>}
+                    </div>
+                    <div className="deck-quick-menu-item-desc">{item.description}</div>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -218,7 +284,13 @@ function DeckSavePaneContent({ save, cursor, isActivePane, lassoArea }: DeckSave
   const savesManager = useSaves()
   const ohpkmStore = useOhpkmStore()
   const { multiSelectState, toggleSelection, isSelected } = useMultiSelect()
-  const { heldPayload, handleCellClick } = useGamepadNavigation()
+  const {
+    heldPayload,
+    handleCellClick,
+    triggerSavePaneAction,
+    setActivePane,
+    setSaveCursor,
+  } = useGamepadNavigation()
 
   const saveMonIds = useMemo(
     () =>
@@ -306,6 +378,37 @@ function DeckSavePaneContent({ save, cursor, isActivePane, lassoArea }: DeckSave
           />
           <span className="deck-key-hint">RB</span>
         </div>
+      </div>
+
+      {/* Controller-navigable Action Bar (D-Pad Up from row 0) */}
+      <div className="deck-pane-actions-bar">
+        <span className="deck-key-hint" title="Press Up from top row to focus actions">
+          ↑ Actions
+        </span>
+        <button
+          className={`deck-action-btn ${isActivePane && cursor.row === -1 && cursor.col === 0 ? 'focused' : ''}`}
+          onClick={(e) => {
+            e.stopPropagation()
+            setActivePane('save')
+            setSaveCursor({ row: -1, col: 0 })
+            void triggerSavePaneAction(0)
+          }}
+          title="Move 1 of every species missing in the current Bank from this Save into its Living Dex slot"
+        >
+          Transfer Missing → Bank (All)
+        </button>
+        <button
+          className={`deck-action-btn ${isActivePane && cursor.row === -1 && cursor.col === 1 ? 'focused' : ''}`}
+          onClick={(e) => {
+            e.stopPropagation()
+            setActivePane('save')
+            setSaveCursor({ row: -1, col: 1 })
+            void triggerSavePaneAction(1)
+          }}
+          title="Move 1 of every missing species where you have at least 2 in this Save (keeps 1 in-game)"
+        >
+          Transfer Missing (2+ in Save)
+        </button>
       </div>
 
       <div className="deck-grid-wrapper">
@@ -396,7 +499,13 @@ function DeckBankPaneContent({ cursor, isActivePane, lassoArea, bankZoomed }: De
     useBanksAndBoxes()
   const { getPendingMon, importMonsToLocation } = useSaves()
   const { multiSelectState, toggleSelection, isSelected } = useMultiSelect()
-  const { heldPayload, handleCellClick } = useGamepadNavigation()
+  const {
+    heldPayload,
+    handleCellClick,
+    triggerBankPaneAction,
+    setActivePane,
+    setBankCursor,
+  } = useGamepadNavigation()
   const sourceSupportsMon = useDragSourceSupportsMon()
 
   const currentBox = getCurrentBox()
@@ -483,6 +592,49 @@ function DeckBankPaneContent({ cursor, isActivePane, lassoArea, bankZoomed }: De
           />
           <span className="deck-key-hint">RB</span>
         </div>
+      </div>
+
+      {/* Controller-navigable Action Bar (D-Pad Up from row 0) */}
+      <div className="deck-pane-actions-bar">
+        <span className="deck-key-hint" title="Press Up from top row to focus actions">
+          ↑ Actions
+        </span>
+        <button
+          className={`deck-action-btn ${isActivePane && cursor.row === -1 && cursor.col === 0 ? 'focused' : ''}`}
+          onClick={(e) => {
+            e.stopPropagation()
+            setActivePane('bank')
+            setBankCursor({ row: -1, col: 0 })
+            void triggerBankPaneAction(0)
+          }}
+          title="Sort Entire Bank by National Living Dex (#0001–#1025 across Boxes 1–9, 120 per box, duplicates in Overflow)"
+        >
+          Sort Bank: Living Dex
+        </button>
+        <button
+          className={`deck-action-btn ${isActivePane && cursor.row === -1 && cursor.col === 1 ? 'focused' : ''}`}
+          onClick={(e) => {
+            e.stopPropagation()
+            setActivePane('bank')
+            setBankCursor({ row: -1, col: 1 })
+            void triggerBankPaneAction(1)
+          }}
+          title="Sort only the current box by National Dex number"
+        >
+          Sort Box: Species
+        </button>
+        <button
+          className={`deck-action-btn ${isActivePane && cursor.row === -1 && cursor.col === 2 ? 'focused' : ''}`}
+          onClick={(e) => {
+            e.stopPropagation()
+            setActivePane('bank')
+            setBankCursor({ row: -1, col: 2 })
+            void triggerBankPaneAction(2)
+          }}
+          title="Move focused or selected Pokémon to Release Area"
+        >
+          Release
+        </button>
       </div>
 
       <div className="deck-grid-wrapper">

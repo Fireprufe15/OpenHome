@@ -35,10 +35,20 @@ function clampGridMove(
   deltaRow: number,
   deltaCol: number,
   maxRows: number,
-  maxCols: number
+  maxCols: number,
+  actionCount = 2
 ): GridCoord {
+  const nextRow = Math.max(-1, Math.min(maxRows - 1, current.row + deltaRow))
+  if (nextRow === -1) {
+    const maxActionCol = actionCount - 1
+    const nextCol =
+      current.row === -1
+        ? Math.max(0, Math.min(maxActionCol, current.col + deltaCol))
+        : Math.min(maxActionCol, current.col)
+    return { row: -1, col: nextCol }
+  }
   return {
-    row: Math.max(0, Math.min(maxRows - 1, current.row + deltaRow)),
+    row: nextRow,
     col: Math.max(0, Math.min(maxCols - 1, current.col + deltaCol)),
   }
 }
@@ -74,13 +84,25 @@ describe('Deck UI Gamepad Navigation Logic', () => {
       expect(cursor).toEqual({ row: 0, col: 0 })
     })
 
-    it('clamps at grid boundaries without wrapping unexpectedly', () => {
+    it('clamps at grid boundaries and allows navigating up to row -1 action bar', () => {
       let cursor: GridCoord = { row: 0, col: 0 }
 
-      // Try moving up and left from top-left
-      cursor = clampGridMove(cursor, -1, 0, 5, 6)
-      expect(cursor).toEqual({ row: 0, col: 0 })
-      cursor = clampGridMove(cursor, 0, -1, 5, 6)
+      // Moving up from top row enters row -1 action bar
+      cursor = clampGridMove(cursor, -1, 0, 5, 6, 2)
+      expect(cursor).toEqual({ row: -1, col: 0 })
+
+      // Navigate right on action bar
+      cursor = clampGridMove(cursor, 0, 1, 5, 6, 2)
+      expect(cursor).toEqual({ row: -1, col: 1 })
+
+      // Clamps at right end of action bar
+      cursor = clampGridMove(cursor, 0, 1, 5, 6, 2)
+      expect(cursor).toEqual({ row: -1, col: 1 })
+
+      // Move back down to grid row 0
+      cursor = clampGridMove(cursor, 1, 0, 5, 6, 2)
+      expect(cursor).toEqual({ row: 0, col: 1 })
+      cursor = clampGridMove(cursor, 0, -1, 5, 6, 2)
       expect(cursor).toEqual({ row: 0, col: 0 })
 
       // Move to bottom-right (row 4, col 5)

@@ -4,6 +4,7 @@ import { monSupportedBySave } from '@openhome-core/save/util'
 import { R } from '@openhome-core/util/functional'
 import useDisplayError from '@openhome-ui/hooks/displayError'
 import {
+  bankNameOrDefault,
   OPENHOME_BOX_COLUMNS,
   OPENHOME_BOX_ROWS,
   OPENHOME_BOX_SLOTS,
@@ -24,6 +25,14 @@ import {
 } from 'react'
 import { DeckPane, GridCoord, HeldMonPayload, LassoArea } from '../gamepad/types'
 import { useGamepadInput } from '../gamepad/useGamepadInput'
+
+export interface QuickMenuItem {
+  id: string
+  label: string
+  description: string
+  disabled?: boolean
+  action: () => void | Promise<void>
+}
 
 interface GamepadNavigationContextType {
   deckModeEnabled: boolean
@@ -54,9 +63,19 @@ interface GamepadNavigationContextType {
   saveModalOpen: boolean
   setSaveModalOpen: (open: boolean) => void
 
+  quickMenuOpen: boolean
+  setQuickMenuOpen: (open: boolean) => void
+  quickMenuIndex: number
+  setQuickMenuIndex: (index: number) => void
+  quickMenuItems: QuickMenuItem[]
+  executeQuickMenuItem: (index: number) => void
+  statusMessage: string | null
+
   activeLocation: MonLocation | null
   handleCellClick: (pane: DeckPane, row: number, col: number) => void
   releaseActiveOrSelectedMons: () => Promise<void>
+  triggerSavePaneAction: (actionCol: number) => Promise<void>
+  triggerBankPaneAction: (actionCol: number) => Promise<void>
 }
 
 const GamepadNavigationContext = createContext<GamepadNavigationContextType | null>(null)
@@ -78,15 +97,20 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
     saveBoxNavigateLeft,
     saveBoxNavigateRight,
     moveMon,
+    moveMissingToBank,
     getMonAtLocation,
     releaseMonAtLocation,
   } = savesManager
   const banksAndBoxes = useBanksAndBoxes()
   const {
+    banks,
     getCurrentBank,
     getCurrentBox,
+    switchToBank,
     switchToPreviousBox,
     switchToNextBox,
+    sortHomeBox,
+    sortAllHomeBoxesLivingDex,
     homeLocationIsEmpty,
   } = banksAndBoxes
   const {
@@ -132,6 +156,18 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
   const [lassoAnchor, setLassoAnchor] = useState<GridCoord | null>(null)
   const [detailsModalMon, setDetailsModalMon] = useState<PKMInterface | null>(null)
   const [saveModalOpen, setSaveModalOpen] = useState(false)
+  const [quickMenuOpen, setQuickMenuOpen] = useState(false)
+  const [quickMenuIndex, setQuickMenuIndex] = useState(0)
+  const [statusMessage, setStatusMessage] = useState<string | null>(null)
+  const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const showStatus = useCallback((msg: string) => {
+    setStatusMessage(msg)
+    if (statusTimerRef.current) clearTimeout(statusTimerRef.current)
+    statusTimerRef.current = setTimeout(() => {
+      setStatusMessage(null)
+    }, 3200)
+  }, [])
 
   const activeSave = allOpenSaves[activeSaveIndex] ?? allOpenSaves[0]
   const saveCols = activeSave ? activeSave.boxColumns : 6
@@ -140,10 +176,14 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
   const bankCols = OPENHOME_BOX_COLUMNS // 12
   const bankRows = OPENHOME_BOX_ROWS // 10
 
+  const SAVE_ACTION_COUNT = 2
+  const BANK_ACTION_COUNT = 3
+
   const activeCursor = activePane === 'save' ? saveCursor : bankCursor
 
   const buildLocation = useCallback(
     (pane: DeckPane, row: number, col: number): MonLocation | null => {
+      if (row < 0) return null
       if (pane === 'save') {
         if (!activeSave) return null
         const boxSlot = row * saveCols + col
@@ -362,10 +402,98 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
     ]
   )
 
+  const releaseActiveOrSelectedMons = useCallback(async () => {
+    if (multiSelectState.selectedLocations.length > 0) {
+      for (const loc of multiSelectState.selectedLocations) {
+        const mon = await getMonAtLocation(loc)
+        if (mon) releaseMonAtLocation(loc)
+      }
+      clearSelections()
+      setMultiSelectEnabled(false)
+      showStatus('Moved selected Pokémon to Release Area')
+      return
+    }
+    if (activeLocation) {
+      const mon = await getMonAtLocation(activeLocation)
+      if (mon) {
+        releaseMonAtLocation(activeLocation)
+        showStatus(`Moved ${mon.nickname} to Release Area`)
+      }
+    }
+  }, [
+    multiSelectState.selectedLocations,
+    activeLocation,
+    getMonAtLocation,
+    releaseMonAtLocation,
+    clearSelections,
+    setMultiSelectEnabled,
+    showStatus,
+  ])
+
+  const triggerSavePaneAction = useCallback(
+    async (actionCol: number) => {
+      if (!activeSave) {
+        setSaveModalOpen(true)
+        return
+      }
+      const currentBank = getCurrentBank()
+      const bankLabel = bankNameOrDefault(currentBank)
+      if (actionCol === 0) {
+        const moved = await moveMissingToBank(activeSave, currentBank.index, false)
+        showStatus(`Transferred ${moved} missing Pokémon to ${bankLabel}`)
+      } else if (actionCol === 1) {
+        const moved = await moveMissingToBank(activeSave, currentBank.index, true)
+        showStatus(`Transferred ${moved} duplicate missing Pokémon (2+ in save) to ${bankLabel}`)
+      }
+    },
+    [activeSave, getCurrentBank, moveMissingToBank, showStatus]
+  )
+
+  const triggerBankPaneAction = useCallback(
+    async (actionCol: number) => {
+      const currentBank = getCurrentBank()
+      const currentBox = getCurrentBox()
+      if (actionCol === 0) {
+        await sortAllHomeBoxesLivingDex()
+        showStatus(
+          `Sorted ${bankNameOrDefault(currentBank)} by National Living Dex (120 slots/box)`
+        )
+      } else if (actionCol === 1) {
+        await sortHomeBox(currentBox.index, 'Species')
+        showStatus(`Sorted ${currentBox.name ?? `Box ${currentBox.index + 1}`} by Species`)
+      } else if (actionCol === 2) {
+        await releaseActiveOrSelectedMons()
+      }
+    },
+    [
+      getCurrentBank,
+      getCurrentBox,
+      sortAllHomeBoxesLivingDex,
+      sortHomeBox,
+      releaseActiveOrSelectedMons,
+      showStatus,
+    ]
+  )
+
   const handleConfirmAction = useCallback(async () => {
+    if (activeCursor.row === -1) {
+      if (activePane === 'save') {
+        await triggerSavePaneAction(activeCursor.col)
+      } else {
+        await triggerBankPaneAction(activeCursor.col)
+      }
+      return
+    }
     if (!activeLocation) return
     await executePickUpOrPlaceAt(activeLocation)
-  }, [activeLocation, executePickUpOrPlaceAt])
+  }, [
+    activeCursor,
+    activePane,
+    triggerSavePaneAction,
+    triggerBankPaneAction,
+    activeLocation,
+    executePickUpOrPlaceAt,
+  ])
 
   // Mouse / Touchscreen click support in Deck Mode
   const handleCellClick = useCallback(
@@ -405,31 +533,119 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
     ]
   )
 
-  const releaseActiveOrSelectedMons = useCallback(async () => {
-    if (multiSelectState.selectedLocations.length > 0) {
-      for (const loc of multiSelectState.selectedLocations) {
-        const mon = await getMonAtLocation(loc)
-        if (mon) releaseMonAtLocation(loc)
-      }
-      clearSelections()
-      setMultiSelectEnabled(false)
-      return
-    }
-    if (activeLocation) {
-      const mon = await getMonAtLocation(activeLocation)
-      if (mon) releaseMonAtLocation(activeLocation)
-    }
+  const quickMenuItems = useMemo<QuickMenuItem[]>(() => {
+    const currentBank = getCurrentBank()
+    const currentBox = getCurrentBox()
+    const bankLabel = bankNameOrDefault(currentBank)
+
+    return [
+      {
+        id: 'sort-living-dex',
+        label: `Sort ${bankLabel} by National Living Dex`,
+        description:
+          'Places #0001–#1025 into slots across Boxes 1–9 (120 per box), names boxes 0001-0120..0961-1025, and puts duplicates into Overflow (Box 10+).',
+        action: async () => {
+          await sortAllHomeBoxesLivingDex()
+          showStatus(`Sorted ${bankLabel} by National Living Dex`)
+        },
+      },
+      {
+        id: 'transfer-missing-all',
+        label: `Transfer All Missing from Save → ${bankLabel}`,
+        description: activeSave
+          ? `Moves 1 of every species in ${activeSave.gameNameFull} not yet in ${bankLabel} into its Living Dex slot.`
+          : 'Open a save file first to transfer missing Pokémon.',
+        disabled: !activeSave,
+        action: async () => {
+          if (!activeSave) return
+          const moved = await moveMissingToBank(activeSave, currentBank.index, false)
+          showStatus(`Transferred ${moved} missing Pokémon to ${bankLabel}`)
+        },
+      },
+      {
+        id: 'transfer-missing-dupes',
+        label: `Transfer Missing (2+ in Save) → ${bankLabel}`,
+        description: activeSave
+          ? `Moves 1 of every missing species where ${activeSave.gameNameFull} has at least 2 copies (preserving 1 for in-game Living Dex).`
+          : 'Open a save file first to transfer missing duplicate Pokémon.',
+        disabled: !activeSave,
+        action: async () => {
+          if (!activeSave) return
+          const moved = await moveMissingToBank(activeSave, currentBank.index, true)
+          showStatus(`Transferred ${moved} duplicate missing Pokémon to ${bankLabel}`)
+        },
+      },
+      {
+        id: 'sort-box-species',
+        label: `Sort Current Box (${currentBox.name ?? `Box ${currentBox.index + 1}`}) by Species`,
+        description: 'Sorts only the currently viewed box by National Dex number.',
+        action: async () => {
+          await sortHomeBox(currentBox.index, 'Species')
+          showStatus(`Sorted ${currentBox.name ?? `Box ${currentBox.index + 1}`} by Species`)
+        },
+      },
+      {
+        id: 'switch-bank',
+        label: `Switch Active Bank (Current: ${bankLabel})`,
+        description:
+          banks.length > 1
+            ? 'Cycles to the next OpenHome Bank.'
+            : 'Only 1 bank exists currently.',
+        disabled: banks.length <= 1,
+        action: () => {
+          if (banks.length <= 1) return
+          const nextIdx = (currentBank.index + 1) % banks.length
+          switchToBank(nextIdx)
+          showStatus(`Switched to ${bankNameOrDefault(banks[nextIdx])}`)
+        },
+      },
+      {
+        id: 'open-save',
+        label: 'Open / Add Game Save File...',
+        description: 'Opens the save file selector modal.',
+        action: () => {
+          setSaveModalOpen(true)
+        },
+      },
+      {
+        id: 'save-all',
+        label: 'Save All Changes',
+        description: 'Writes all modified save files and OpenHome banks to disk.',
+        action: () => {
+          backend.emitMenuEvent('save')
+          showStatus('Saving all changes...')
+        },
+      },
+    ]
   }, [
-    multiSelectState.selectedLocations,
-    activeLocation,
-    getMonAtLocation,
-    releaseMonAtLocation,
-    clearSelections,
-    setMultiSelectEnabled,
+    getCurrentBank,
+    getCurrentBox,
+    activeSave,
+    banks,
+    sortAllHomeBoxesLivingDex,
+    moveMissingToBank,
+    sortHomeBox,
+    switchToBank,
+    backend,
+    showStatus,
   ])
+
+  const executeQuickMenuItem = useCallback(
+    (index: number) => {
+      const item = quickMenuItems[index]
+      if (!item || item.disabled) return
+      setQuickMenuOpen(false)
+      void item.action()
+    },
+    [quickMenuItems]
+  )
 
   // Cancel action
   const handleCancelAction = useCallback(() => {
+    if (quickMenuOpen) {
+      setQuickMenuOpen(false)
+      return
+    }
     if (detailsModalMon) {
       setDetailsModalMon(null)
       return
@@ -448,7 +664,15 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
       setMultiSelectEnabled(false)
       return
     }
+    if (activeCursor.row === -1) {
+      if (activePane === 'save') {
+        setSaveCursor((prev) => ({ row: 0, col: prev.col }))
+      } else {
+        setBankCursor((prev) => ({ row: 0, col: prev.col }))
+      }
+    }
   }, [
+    quickMenuOpen,
     detailsModalMon,
     saveModalOpen,
     heldPayload,
@@ -456,21 +680,45 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
     multiSelectState.multiSelectEnabled,
     clearSelections,
     setMultiSelectEnabled,
+    activeCursor.row,
+    activePane,
   ])
 
-  // Move grid cursor with bounds checking
+  // Move grid cursor with bounds checking (including row -1 action bar)
   const moveCursor = useCallback(
     (deltaRow: number, deltaCol: number) => {
       if (activePane === 'save') {
-        setSaveCursor((prev) => ({
-          row: Math.max(0, Math.min(saveRows - 1, prev.row + deltaRow)),
-          col: Math.max(0, Math.min(saveCols - 1, prev.col + deltaCol)),
-        }))
+        setSaveCursor((prev) => {
+          const nextRow = Math.max(-1, Math.min(saveRows - 1, prev.row + deltaRow))
+          if (nextRow === -1) {
+            const maxActionCol = SAVE_ACTION_COUNT - 1
+            const nextCol =
+              prev.row === -1
+                ? Math.max(0, Math.min(maxActionCol, prev.col + deltaCol))
+                : Math.min(maxActionCol, prev.col)
+            return { row: -1, col: nextCol }
+          }
+          return {
+            row: nextRow,
+            col: Math.max(0, Math.min(saveCols - 1, prev.col + deltaCol)),
+          }
+        })
       } else {
-        setBankCursor((prev) => ({
-          row: Math.max(0, Math.min(bankRows - 1, prev.row + deltaRow)),
-          col: Math.max(0, Math.min(bankCols - 1, prev.col + deltaCol)),
-        }))
+        setBankCursor((prev) => {
+          const nextRow = Math.max(-1, Math.min(bankRows - 1, prev.row + deltaRow))
+          if (nextRow === -1) {
+            const maxActionCol = BANK_ACTION_COUNT - 1
+            const nextCol =
+              prev.row === -1
+                ? Math.max(0, Math.min(maxActionCol, prev.col + deltaCol))
+                : Math.min(maxActionCol, prev.col)
+            return { row: -1, col: nextCol }
+          }
+          return {
+            row: nextRow,
+            col: Math.max(0, Math.min(bankCols - 1, prev.col + deltaCol)),
+          }
+        })
       }
     },
     [activePane, saveRows, saveCols, bankRows, bankCols]
@@ -479,16 +727,18 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
   // Lasso start and end handlers
   const handleYHoldStart = useCallback(() => {
     if (!deckModeEnabled) return
-    setMultiSelectEnabled(true)
     const current = activePane === 'save' ? saveCursor : bankCursor
+    if (current.row < 0) return
+    setMultiSelectEnabled(true)
     setLassoAnchor({ ...current })
   }, [deckModeEnabled, activePane, saveCursor, bankCursor, setMultiSelectEnabled])
 
   const handleYHoldEnd = useCallback(async () => {
     if (!lassoAnchor) return
     const current = activePane === 'save' ? saveCursor : bankCursor
-    const minRow = Math.min(lassoAnchor.row, current.row)
-    const maxRow = Math.max(lassoAnchor.row, current.row)
+    const curRow = Math.max(0, current.row)
+    const minRow = Math.min(lassoAnchor.row, curRow)
+    const maxRow = Math.max(lassoAnchor.row, curRow)
     const minCol = Math.min(lassoAnchor.col, current.col)
     const maxCol = Math.max(lassoAnchor.col, current.col)
 
@@ -539,6 +789,20 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
   const handleAction = useCallback(
     (action: string) => {
       if (!deckModeEnabled) return
+
+      // Handle Quick Actions Menu navigation
+      if (quickMenuOpen) {
+        if (action === 'up') {
+          setQuickMenuIndex((i) => (i > 0 ? i - 1 : quickMenuItems.length - 1))
+        } else if (action === 'down') {
+          setQuickMenuIndex((i) => (i + 1) % quickMenuItems.length)
+        } else if (action === 'confirm') {
+          executeQuickMenuItem(quickMenuIndex)
+        } else if (action === 'cancel' || action === 'quickMenu') {
+          setQuickMenuOpen(false)
+        }
+        return
+      }
 
       // When a modal is open, only allow cancel or summary toggle
       if (detailsModalMon || saveModalOpen) {
@@ -609,11 +873,20 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
           break
         case 'saveChanges':
           backend.emitMenuEvent('save')
+          showStatus('Saving all changes...')
+          break
+        case 'quickMenu':
+          setQuickMenuIndex(0)
+          setQuickMenuOpen(true)
           break
       }
     },
     [
       deckModeEnabled,
+      quickMenuOpen,
+      quickMenuItems.length,
+      quickMenuIndex,
+      executeQuickMenuItem,
       detailsModalMon,
       saveModalOpen,
       moveCursor,
@@ -628,6 +901,7 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
       switchToPreviousBox,
       switchToNextBox,
       backend,
+      showStatus,
     ]
   )
 
@@ -674,9 +948,18 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
       setDetailsModalMon,
       saveModalOpen,
       setSaveModalOpen,
+      quickMenuOpen,
+      setQuickMenuOpen,
+      quickMenuIndex,
+      setQuickMenuIndex,
+      quickMenuItems,
+      executeQuickMenuItem,
+      statusMessage,
       activeLocation,
       handleCellClick,
       releaseActiveOrSelectedMons,
+      triggerSavePaneAction,
+      triggerBankPaneAction,
     }),
     [
       deckModeEnabled,
@@ -692,9 +975,16 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
       lassoArea,
       detailsModalMon,
       saveModalOpen,
+      quickMenuOpen,
+      quickMenuIndex,
+      quickMenuItems,
+      executeQuickMenuItem,
+      statusMessage,
       activeLocation,
       handleCellClick,
       releaseActiveOrSelectedMons,
+      triggerSavePaneAction,
+      triggerBankPaneAction,
     ]
   )
 

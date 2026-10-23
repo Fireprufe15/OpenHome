@@ -476,7 +476,7 @@ export function useMonLocationsInternal() {
     selectedMonsToMove.sort((a, b) => a.mon.nationalDex - b.mon.nationalDex)
 
     // Ensure Living Dex boxes exist in target bank
-    banksAndBoxes.ensureBankBoxCount(targetBankIndex, LIVING_DEX_BOX_COUNT)
+    banksAndBoxes.ensureBankBoxCount(targetBankIndex, LIVING_DEX_BOX_COUNT, true)
 
     let overflowBox = LIVING_DEX_BOX_COUNT
     let overflowSlot = 0
@@ -493,7 +493,7 @@ export function useMonLocationsInternal() {
         banksAndBoxes.setAtHomeLocation(targetLocation, ohpkm.openhomeId)
       } else {
         while (true) {
-          banksAndBoxes.ensureBankBoxCount(targetBankIndex, overflowBox + 1)
+          banksAndBoxes.ensureBankBoxCount(targetBankIndex, overflowBox + 1, true)
           if (overflowSlot < OPENHOME_BOX_SLOTS) {
             const loc = { bank: targetBankIndex, box: overflowBox, boxSlot: overflowSlot }
             if (banksAndBoxes.homeLocationIsEmpty(loc)) {

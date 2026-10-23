@@ -196,6 +196,10 @@ export default function HomeBoxDisplay() {
                 </Button>
               </DropdownMenu.Trigger>
               <DropdownMenu.Content>
+                <DropdownMenu.Item onClick={sortAllHomeBoxesLivingDex}>
+                  Sort Bank by National Living Dex
+                </DropdownMenu.Item>
+                <DropdownMenu.Separator />
                 {viewMode === 'one' && (
                   <DropdownMenu.Sub>
                     <DropdownMenu.SubTrigger>Sort this box...</DropdownMenu.SubTrigger>

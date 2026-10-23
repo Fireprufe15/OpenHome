@@ -30,6 +30,7 @@ const defaultButtonStates: GamepadButtonStates = {
   saveChanges: false,
   openSave: false,
   toggleZoom: false,
+  quickMenu: false,
 }
 
 export function useGamepadInput(options: UseGamepadInputOptions) {
@@ -82,14 +83,15 @@ export function useGamepadInput(options: UseGamepadInputOptions) {
           right: Boolean(btns[15]?.pressed || isStickRight),
           confirm: Boolean(btns[0]?.pressed), // A
           cancel: Boolean(btns[1]?.pressed), // B
-          summary: Boolean(btns[2]?.pressed), // X
-          select: Boolean(btns[3]?.pressed), // Y
+          select: Boolean(btns[2]?.pressed), // Y (flipped on Linux/Deck controller mapping)
+          summary: Boolean(btns[3]?.pressed), // X (flipped on Linux/Deck controller mapping)
           prevBox: Boolean(btns[4]?.pressed), // LB
           nextBox: Boolean(btns[5]?.pressed), // RB
           prevPane: Boolean(btns[6]?.pressed || (btns[6]?.value ?? 0) > 0.5), // LT
           nextPane: Boolean(btns[7]?.pressed || (btns[7]?.value ?? 0) > 0.5), // RT
           openSave: Boolean(btns[8]?.pressed), // Select / Back / View
           saveChanges: Boolean(btns[9]?.pressed), // Start / Menu
+          quickMenu: Boolean(btns[10]?.pressed), // L3
           toggleZoom: Boolean(btns[11]?.pressed), // R3
         }
 
@@ -164,6 +166,7 @@ export function useGamepadInput(options: UseGamepadInputOptions) {
           { key: 'openSave', action: 'openSave' },
           { key: 'saveChanges', action: 'saveChanges' },
           { key: 'toggleZoom', action: 'toggleZoom' },
+          { key: 'quickMenu', action: 'quickMenu' },
         ]
 
         for (const { key, action } of discreteActions) {
@@ -286,6 +289,11 @@ export function useGamepadInput(options: UseGamepadInputOptions) {
         case 'KeyZ':
           e.preventDefault()
           callbacksRef.current.onAction('toggleZoom')
+          break
+        case 'KeyM':
+        case 'F1':
+          e.preventDefault()
+          callbacksRef.current.onAction('quickMenu')
           break
       }
     }

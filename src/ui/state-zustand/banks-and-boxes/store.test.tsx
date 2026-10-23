@@ -1,5 +1,6 @@
 // import userEvent from '@testing-library/user-event'
 import {
+  getLivingDexBoxName,
   getLivingDexCoordinates,
   LIVING_DEX_BOX_COUNT,
   sortForLivingDex,
@@ -116,6 +117,14 @@ describe('living dex coordinates and sorting', () => {
     expect(getLivingDexCoordinates(120)).toEqual({ box: 0, boxSlot: 119 })
     expect(getLivingDexCoordinates(121)).toEqual({ box: 1, boxSlot: 0 })
     expect(getLivingDexCoordinates(1025)).toEqual({ box: 8, boxSlot: 64 })
+  })
+
+  test('generates 120-slot range box names for living dex and overflow boxes', () => {
+    expect(getLivingDexBoxName(0, true, 120)).toBe('0001 - 0120')
+    expect(getLivingDexBoxName(1, true, 120)).toBe('0121 - 0240')
+    expect(getLivingDexBoxName(8, true, 120)).toBe('0961 - 1025')
+    expect(getLivingDexBoxName(9, true, 120)).toBe('Overflow 1')
+    expect(getLivingDexBoxName(9, false, 120)).toBeNull()
   })
 
   test('sorts living dex prioritizing non-eggs, dex number, and base forms', () => {

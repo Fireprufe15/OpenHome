@@ -38,6 +38,7 @@ export type GamepadAction =
   | 'saveChanges' // Start / Ctrl+S / F5 -> Save all changes
   | 'openSave' // Select / Ctrl+O / F2 -> Open save modal
   | 'toggleZoom' // R3 / Z -> Toggle 12x10 full vs zoomed 6x5
+  | 'quickMenu' // L3 / M -> Open controller quick actions menu
 
 export interface GamepadButtonStates {
   up: boolean
@@ -55,6 +56,7 @@ export interface GamepadButtonStates {
   saveChanges: boolean
   openSave: boolean
   toggleZoom: boolean
+  quickMenu: boolean
 }
 
 export interface GamepadInputEvent {

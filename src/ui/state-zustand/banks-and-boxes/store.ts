@@ -1,6 +1,7 @@
 import useBackend from '@openhome-core/backend/useBackend'
 import { OhpkmIdentifier } from '@openhome-core/pkm/Lookup'
 import {
+  getLivingDexBoxName,
   getLivingDexCoordinates,
   getSortFunctionNullable,
   LIVING_DEX_BOX_COUNT,
@@ -65,9 +66,14 @@ export type BanksAndBoxesController = BanksAndBoxesState & {
   overwriteBoxSlotsCurrentBank: (boxIndex: number, boxSlots: BoxMonIdentifiers) => void
   overwriteAllBoxSlotsCurrentBank: (
     boxSlotsByBoxIndex: Map<number, BoxMonIdentifiers>,
-    minBoxCount?: number
+    minBoxCount?: number,
+    boxNamesByBoxIndex?: Map<number, string | null>
   ) => void
-  ensureBankBoxCount: (bankIndex: number, minBoxCount: number) => void
+  ensureBankBoxCount: (
+    bankIndex: number,
+    minBoxCount: number,
+    applyLivingDexNames?: boolean
+  ) => void
   firstEmptySlotInBankBox: (bankIndex: number, boxIndex: number) => Option<number>
   allMonsInBank: (bankIndex: number) => LocationsByIdentifier
   getCurrentBox: () => SimpleOpenHomeBox
@@ -168,7 +174,8 @@ export const createBanksAndBoxesStore = (
           }),
         overwriteAllBoxSlotsCurrentBank: (
           boxSlotsByBoxIndex: Map<number, BoxMonIdentifiers>,
-          minBoxCount?: number
+          minBoxCount?: number,
+          boxNamesByBoxIndex?: Map<number, string | null>
         ) =>
           set((state) => {
             const currentBank = requireBank(state, state.currentBankIndex)
@@ -189,18 +196,34 @@ export const createBanksAndBoxesStore = (
 
             for (const box of currentBank.boxes.values()) {
               box.identifiers = boxSlotsByBoxIndex.get(box.index) ?? new Map<number, string>()
+              if (boxNamesByBoxIndex && boxNamesByBoxIndex.has(box.index)) {
+                box.name = boxNamesByBoxIndex.get(box.index) ?? null
+              }
             }
             state.reverseLookup = buildReverseLookup({
               banks: state.banks,
               current_bank: state.currentBankIndex,
             })
           }),
-        ensureBankBoxCount: (bankIndex: number, minBoxCount: number) =>
+        ensureBankBoxCount: (
+          bankIndex: number,
+          minBoxCount: number,
+          applyLivingDexNames?: boolean
+        ) =>
           set((state) => {
             const bank = requireBank(state, bankIndex)
             while (bank.boxes.size < minBoxCount) {
               const newBox = buildNewBox(bank, null, undefined)
               bank.boxes = rebuildMapWithNewBox(bank.boxes, newBox, 'end')
+            }
+            if (applyLivingDexNames) {
+              for (const box of bank.boxes.values()) {
+                if (box.index < LIVING_DEX_BOX_COUNT) {
+                  box.name = getLivingDexBoxName(box.index, true, OPENHOME_BOX_SLOTS)
+                } else if (box.index < minBoxCount && !box.name) {
+                  box.name = getLivingDexBoxName(box.index, true, OPENHOME_BOX_SLOTS)
+                }
+              }
             }
           }),
         firstEmptySlotInBankBox: (bankIndex: number, boxIndex: number): Option<number> => {
@@ -737,7 +760,16 @@ export function useBanksAndBoxes() {
       LIVING_DEX_BOX_COUNT + Math.ceil(overflowIds.length / OPENHOME_BOX_SLOTS)
     )
 
-    overwriteAllBoxSlotsCurrentBank(newBoxSlotsByIndex, requiredBoxes)
+    const boxNamesByBoxIndex = new Map<number, string | null>()
+    for (let boxIdx = 0; boxIdx < requiredBoxes; boxIdx++) {
+      const hasMons = (newBoxSlotsByIndex.get(boxIdx)?.size ?? 0) > 0
+      boxNamesByBoxIndex.set(
+        boxIdx,
+        getLivingDexBoxName(boxIdx, hasMons, OPENHOME_BOX_SLOTS)
+      )
+    }
+
+    overwriteAllBoxSlotsCurrentBank(newBoxSlotsByIndex, requiredBoxes, boxNamesByBoxIndex)
 
     return R.Ok(null)
   }
