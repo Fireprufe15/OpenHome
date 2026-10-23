@@ -1,28 +1,34 @@
 import useBackend from '@openhome-core/backend/useBackend'
 import { PKMInterface } from '@openhome-core/pkm/interfaces'
 import { OhpkmIdentifier } from '@openhome-core/pkm/Lookup'
+import { OHPKM } from '@openhome-core/pkm/OHPKM'
 import { SAV, saveToStringIdentifier } from '@openhome-core/save/interfaces'
 import { Option, R, range } from '@openhome-core/util/functional'
 import { isThenable, NowOrLater } from '@openhome-core/util/promise'
+import Fallback from '@openhome-ui/components/Fallback'
 import PokemonDetailsModal from '@openhome-ui/pokemon/PokemonDetailsModal'
 import ArrowButton from '@openhome-ui/saves/boxes/ArrowButton'
 import BoxCellAsync, { BoxSlotContents } from '@openhome-ui/saves/boxes/BoxCellAsync'
 import SavesModal from '@openhome-ui/saves/SavesModal'
 import {
   OPENHOME_BOX_COLUMNS,
-  OPENHOME_BOX_ROWS,
   OPENHOME_BOX_SLOTS,
   useBanksAndBoxes,
 } from '@openhome-ui/state-zustand/banks-and-boxes/store'
-import { useCanSwapWithDragging, useDragSourceSupportsMon } from '@openhome-ui/state-zustand/drag-and-drop/dragStore'
+import {
+  useCanSwapWithDragging,
+  useDragSourceSupportsMon,
+} from '@openhome-ui/state-zustand/drag-and-drop/dragStore'
 import useMultiSelect from '@openhome-ui/state/drag-and-drop/useMultiSelect'
 import { useOhpkmStore } from '@openhome-ui/state/ohpkm'
 import useOhpkmBatchIdLookup from '@openhome-ui/state/ohpkm/useOhpkmIdBatchLookup'
 import { EMPTY_SLOT, HomeMonLocation, MonLocation, useSaves } from '@openhome-ui/state/saves'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
-import { MdClose, MdFileOpen, MdSave } from 'react-icons/md'
+import { MdClose, MdDeleteOutline, MdFileOpen, MdSave } from 'react-icons/md'
 import '../deck-ui.css'
+import { LassoArea } from '../gamepad/types'
 import { useGamepadNavigation } from '../state/GamepadNavigationContext'
+import ControllerHudBar from './ControllerHudBar'
 
 export default function DeckHomeView() {
   const backend = useBackend()
@@ -35,27 +41,24 @@ export default function DeckHomeView() {
     setActiveSaveIndex,
     bankZoomed,
     toggleBankZoom,
+    heldPayload,
+    lassoArea,
     detailsModalMon,
     setDetailsModalMon,
     saveModalOpen,
     setSaveModalOpen,
     toggleDeckMode,
+    releaseActiveOrSelectedMons,
   } = useGamepadNavigation()
 
   const savesManager = useSaves()
   const { allOpenSaves } = savesManager
   const banksAndBoxes = useBanksAndBoxes()
-  const {
-    banks,
-    getCurrentBank,
-    getCurrentBox,
-    switchToBank,
-    switchToPreviousBox,
-    switchToNextBox,
-    sortHomeBox,
-  } = banksAndBoxes
+  const { banks, getCurrentBank, getCurrentBox, switchToBank, sortHomeBox } = banksAndBoxes
 
   const activeSave: SAV | undefined = allOpenSaves[activeSaveIndex] ?? allOpenSaves[0]
+  const currentBank = getCurrentBank()
+  const currentBox = getCurrentBox()
 
   return (
     <div className="deck-container">
@@ -68,7 +71,7 @@ export default function DeckHomeView() {
           <button
             className="deck-top-btn"
             onClick={() => setSaveModalOpen(true)}
-            title="Open Save File (Select)"
+            title="Open Save File (Select / F2)"
           >
             <MdFileOpen /> Open Save
           </button>
@@ -85,21 +88,25 @@ export default function DeckHomeView() {
               ))}
             </select>
           )}
+          {heldPayload && (
+            <span className="deck-badge" style={{ background: 'rgba(244, 63, 94, 0.25)', color: '#fda4af', borderColor: '#f43f5e' }}>
+              Holding: {heldPayload.multiLocations ? `${heldPayload.multiLocations.length} Pokémon` : heldPayload.mon.nickname}
+            </span>
+          )}
         </div>
 
         <div className="deck-top-bar-right">
-          {activePane === 'bank' && (
-            <button
-              className={`deck-top-btn ${bankZoomed ? 'active' : ''}`}
-              onClick={toggleBankZoom}
-            >
-              {bankZoomed ? '12×10 Full' : '6×5 Zoom'}
-            </button>
-          )}
+          <button
+            className={`deck-top-btn ${bankZoomed ? 'active' : ''}`}
+            onClick={toggleBankZoom}
+            title="Toggle Bank Grid Zoom (R3 / Z)"
+          >
+            {bankZoomed ? '12×10 Full' : 'Zoom Grid'}
+          </button>
 
           <select
             className="deck-top-btn"
-            value={getCurrentBank().index}
+            value={currentBank.index}
             onChange={(e) => switchToBank(Number(e.target.value))}
           >
             {banks.map((b) => (
@@ -111,21 +118,29 @@ export default function DeckHomeView() {
 
           <button
             className="deck-top-btn"
-            onClick={() => sortHomeBox(getCurrentBox().index, 'National Dex Number')}
-            title="Sort Current Bank Box"
+            onClick={() => void sortHomeBox(currentBox.index, 'pokedex')}
+            title="Sort Current Bank Box by National Dex"
           >
             Sort Box
           </button>
 
           <button
             className="deck-top-btn"
+            onClick={() => void releaseActiveOrSelectedMons()}
+            title="Move Focused or Selected Pokémon to Release Area"
+          >
+            <MdDeleteOutline /> Release
+          </button>
+
+          <button
+            className="deck-top-btn"
             onClick={() => backend.emitMenuEvent('save')}
-            title="Save All Changes (Start)"
+            title="Save All Changes (Start / Ctrl+S)"
           >
             <MdSave /> Save
           </button>
 
-          <button className="deck-top-btn" onClick={toggleDeckMode} title="Exit Deck Mode">
+          <button className="deck-top-btn" onClick={toggleDeckMode} title="Switch to Desktop UI">
             <MdClose /> Desktop Mode
           </button>
         </div>
@@ -138,11 +153,18 @@ export default function DeckHomeView() {
           className={`deck-pane deck-pane-save ${activePane === 'save' ? 'active-pane' : ''}`}
           onClick={() => setActivePane('save')}
         >
-          {activeSave ? (
-            <DeckSavePaneContent save={activeSave} cursor={saveCursor} isActivePane={activePane === 'save'} lassoArea={lassoArea} />
-          ) : (
-            <DeckEmptySavePrompt onOpenSave={() => setSaveModalOpen(true)} />
-          )}
+          <Fallback>
+            {activeSave ? (
+              <DeckSavePaneContent
+                save={activeSave}
+                cursor={saveCursor}
+                isActivePane={activePane === 'save'}
+                lassoArea={lassoArea}
+              />
+            ) : (
+              <DeckEmptySavePrompt onOpenSave={() => setSaveModalOpen(true)} />
+            )}
+          </Fallback>
         </section>
 
         {/* Right Pane: OpenHome Bank */}
@@ -150,21 +172,32 @@ export default function DeckHomeView() {
           className={`deck-pane deck-pane-bank ${activePane === 'bank' ? 'active-pane' : ''}`}
           onClick={() => setActivePane('bank')}
         >
-          <DeckBankPaneContent
-            cursor={bankCursor}
-            isActivePane={activePane === 'bank'}
-            lassoArea={lassoArea}
-            bankZoomed={bankZoomed}
-          />
+          <Fallback>
+            <DeckBankPaneContent
+              cursor={bankCursor}
+              isActivePane={activePane === 'bank'}
+              lassoArea={lassoArea}
+              bankZoomed={bankZoomed}
+            />
+          </Fallback>
         </section>
       </main>
 
+      {/* Bottom Controller Prompts HUD */}
+      <ControllerHudBar />
+
       {/* Details & Saves Modals */}
-      <PokemonDetailsModal
-        mon={detailsModalMon ?? undefined}
-        key={detailsModalMon?.openhomeId ?? detailsModalMon?.personalityValue}
-        onClose={() => setDetailsModalMon(null)}
-      />
+      <Fallback>
+        <PokemonDetailsModal
+          mon={detailsModalMon ?? undefined}
+          key={
+            detailsModalMon
+              ? `${detailsModalMon.openhomeId ?? detailsModalMon.personalityValue ?? detailsModalMon.nickname}`
+              : 'closed'
+          }
+          onClose={() => setDetailsModalMon(null)}
+        />
+      </Fallback>
 
       <SavesModal open={saveModalOpen} onClose={() => setSaveModalOpen(false)} />
     </div>
@@ -178,26 +211,24 @@ interface DeckSavePaneProps {
   save: SAV
   cursor: { row: number; col: number }
   isActivePane: boolean
-  lassoArea: { pane: string; startRow: number; startCol: number; endRow: number; endCol: number } | null
+  lassoArea: LassoArea | null
 }
 
 function DeckSavePaneContent({ save, cursor, isActivePane, lassoArea }: DeckSavePaneProps) {
   const savesManager = useSaves()
   const ohpkmStore = useOhpkmStore()
   const { multiSelectState, toggleSelection, isSelected } = useMultiSelect()
-  const { heldPayload } = useGamepadNavigation()
+  const { heldPayload, handleCellClick } = useGamepadNavigation()
 
-  const allSaveMons = useMemo(() => save.getAllMons().map((mon) => [mon, save] as const), [save])
-  const { batchResults: saveOhpkms } = useOhpkmBatchIdLookup(
-    useMemo(
-      () =>
-        allSaveMons
-          .map(([mon]) => mon)
-          .map(ohpkmStore.getPotentialOhpkmId)
-          .filter((id): id is string => typeof id === 'string'),
-      [allSaveMons, ohpkmStore]
-    )
+  const saveMonIds = useMemo(
+    () =>
+      save
+        .getAllMons()
+        .map((mon) => ohpkmStore.getPotentialOhpkmId(mon))
+        .filter((id): id is string => typeof id === 'string'),
+    [save, ohpkmStore]
   )
+  const { batchResults: saveOhpkms } = useOhpkmBatchIdLookup(saveMonIds)
 
   const canSwapWithDragging = useCanSwapWithDragging(save)
   const cols = save.boxColumns
@@ -213,16 +244,23 @@ function DeckSavePaneContent({ save, cursor, isActivePane, lassoArea }: DeckSave
           saveIdentifier: save.identifier,
         }
 
-        let mon: NowOrLater<R.Result<Option<PKMInterface>>> = save.tryGetMonAt(location.box, location.boxSlot)
+        let mon: NowOrLater<R.Result<Option<PKMInterface>>> = save.tryGetMonAt(
+          location.box,
+          location.boxSlot
+        )
 
         if (R.isErr(mon)) {
           return { location, mon, openhomeId: undefined }
         }
 
-        const potentialId = ohpkmStore.getPotentialOhpkmId(save.getMonAt(location.box, location.boxSlot))
+        const slotMon = save.getMonAt(location.box, location.boxSlot)
+        const potentialId = slotMon ? ohpkmStore.getPotentialOhpkmId(slotMon) : undefined
         let openhomeId = potentialId
 
-        const ohpkm = potentialId && saveOhpkms?.get(potentialId) ? R.dropError(saveOhpkms.get(potentialId)!) : undefined
+        const ohpkm =
+          potentialId && saveOhpkms?.get(potentialId)
+            ? R.dropError(saveOhpkms.get(potentialId)!)
+            : undefined
         mon = ohpkm ? R.Ok(ohpkm) : mon
 
         const pendingMon = savesManager.getPendingMon(location)
@@ -243,7 +281,6 @@ function DeckSavePaneContent({ save, cursor, isActivePane, lassoArea }: DeckSave
     [cols, rows, save, ohpkmStore, saveOhpkms, savesManager]
   )
 
-  const focusedSlotIndex = cursor.row * cols + cursor.col
   const focusedSlotRef = useRef<HTMLDivElement | null>(null)
 
   return (
@@ -255,9 +292,19 @@ function DeckSavePaneContent({ save, cursor, isActivePane, lassoArea }: DeckSave
           </span>
         </div>
         <div className="deck-box-nav">
-          <ArrowButton onClick={() => savesManager.saveBoxNavigateLeft(save)} direction="left" />
+          <span className="deck-key-hint">LB</span>
+          <ArrowButton
+            onClick={() => savesManager.saveBoxNavigateLeft(save)}
+            dragID={`deck_arrow_left_${save.tid}_${save.sid}`}
+            direction="left"
+          />
           <span className="deck-box-name">{save.getBoxName(save.currentPCBox)}</span>
-          <ArrowButton onClick={() => savesManager.saveBoxNavigateRight(save)} direction="right" />
+          <ArrowButton
+            onClick={() => savesManager.saveBoxNavigateRight(save)}
+            dragID={`deck_arrow_right_${save.tid}_${save.sid}`}
+            direction="right"
+          />
+          <span className="deck-key-hint">RB</span>
         </div>
       </div>
 
@@ -276,14 +323,27 @@ function DeckSavePaneContent({ save, cursor, isActivePane, lassoArea }: DeckSave
               col <= lassoArea.endCol
 
             const slotMetadata = save.getSlotMetadata?.(save.currentPCBox, index)
-            const isSlotDisabled = !canSwapWithDragging(undefined) || slotMetadata?.isDisabled === true
+            const uniqueKey = isThenable(mon)
+              ? `${save.currentPCBox}-${index}-${openhomeId}`
+              : R.isOk(mon) && mon.data
+                ? `${save.currentPCBox}-${index}-${openhomeId ?? mon.data.encryptionConstant ?? mon.data.personalityValue ?? JSON.stringify(mon.data.dvs)}-${mon.data.nickname}`
+                : `${save.currentPCBox}-${index}`
+
+            const borderColor =
+              !isThenable(mon) && R.isOk(mon) && mon.data instanceof OHPKM
+                ? 'var(--ohpkm-cell-border-color)'
+                : undefined
 
             return (
               <div
-                key={`save_${save.currentPCBox}_${index}`}
+                key={`deck_save_slot_${save.currentPCBox}_${index}`}
                 ref={isFocused ? focusedSlotRef : undefined}
                 className={`deck-slot ${isFocused ? 'focused' : ''} ${isLassoed ? 'lasso-highlight' : ''} ${isSelected(location) ? 'selected' : ''}`}
                 tabIndex={isFocused ? 0 : -1}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleCellClick('save', row, col)
+                }}
               >
                 {isFocused && heldPayload && (
                   <span className="deck-held-badge" title="Holding Pokémon">
@@ -291,17 +351,25 @@ function DeckSavePaneContent({ save, cursor, isActivePane, lassoArea }: DeckSave
                   </span>
                 )}
                 <BoxCellAsync
+                  key={uniqueKey}
                   location={location}
                   monPromise={mon}
                   openhomeId={openhomeId}
                   dragID={`${saveToStringIdentifier(save)}_${save.currentPCBox}_${index}`}
-                  isDisabled={() => isSlotDisabled}
+                  isDisabled={(cellMon) =>
+                    !canSwapWithDragging(cellMon) || slotMetadata?.isDisabled === true
+                  }
                   disabledReason={slotMetadata?.disabledReason}
-                  onClick={() => {}}
-                  onDrop={() => {}}
+                  onClick={() => handleCellClick('save', row, col)}
+                  onDrop={(importedMons) => {
+                    if (importedMons) {
+                      void savesManager.importMonsToLocation(importedMons, location)
+                    }
+                  }}
                   multiSelectEnabled={multiSelectState.multiSelectEnabled}
                   isSelected={isSelected(location)}
                   onToggleSelect={() => toggleSelection(location)}
+                  borderColor={borderColor}
                 />
               </div>
             )
@@ -318,16 +386,17 @@ function DeckSavePaneContent({ save, cursor, isActivePane, lassoArea }: DeckSave
 interface DeckBankPaneProps {
   cursor: { row: number; col: number }
   isActivePane: boolean
-  lassoArea: { pane: string; startRow: number; startCol: number; endRow: number; endCol: number } | null
+  lassoArea: LassoArea | null
   bankZoomed: boolean
 }
 
 function DeckBankPaneContent({ cursor, isActivePane, lassoArea, bankZoomed }: DeckBankPaneProps) {
   const ohpkmStore = useOhpkmStore()
-  const { getCurrentBox, getCurrentBank, switchToPreviousBox, switchToNextBox } = useBanksAndBoxes()
+  const { getCurrentBox, getCurrentBank, switchToPreviousBox, switchToNextBox } =
+    useBanksAndBoxes()
   const { getPendingMon, importMonsToLocation } = useSaves()
   const { multiSelectState, toggleSelection, isSelected } = useMultiSelect()
-  const { heldPayload } = useGamepadNavigation()
+  const { heldPayload, handleCellClick } = useGamepadNavigation()
   const sourceSupportsMon = useDragSourceSupportsMon()
 
   const currentBox = getCurrentBox()
@@ -381,7 +450,7 @@ function DeckBankPaneContent({ cursor, isActivePane, lassoArea, bankZoomed }: De
   const focusedSlotRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
-    if (isActivePane && bankZoomed && focusedSlotRef.current) {
+    if (isActivePane && focusedSlotRef.current) {
       focusedSlotRef.current.scrollIntoView({ block: 'nearest', inline: 'nearest' })
     }
   }, [cursor, isActivePane, bankZoomed])
@@ -391,13 +460,28 @@ function DeckBankPaneContent({ cursor, isActivePane, lassoArea, bankZoomed }: De
       <div className="deck-pane-header">
         <div className="deck-pane-title-group">
           <span className="deck-pane-title">
-            OpenHome Bank <span className="deck-key-hint">{getCurrentBank().name ?? `Bank ${currentBankIndex + 1}`}</span>
+            OpenHome Bank{' '}
+            <span className="deck-key-hint">
+              {getCurrentBank().name ?? `Bank ${currentBankIndex + 1}`}
+            </span>
           </span>
         </div>
         <div className="deck-box-nav">
-          <ArrowButton onClick={switchToPreviousBox} direction="left" />
-          <span className="deck-box-name">{currentBox.name?.trim() || `Box ${currentBox.index + 1}`}</span>
-          <ArrowButton onClick={switchToNextBox} direction="right" />
+          <span className="deck-key-hint">LB</span>
+          <ArrowButton
+            onClick={switchToPreviousBox}
+            dragID="deck-home-arrow-left"
+            direction="left"
+          />
+          <span className="deck-box-name">
+            {currentBox.name?.trim() || `Box ${currentBox.index + 1}`}
+          </span>
+          <ArrowButton
+            onClick={switchToNextBox}
+            dragID="deck-home-arrow-right"
+            direction="right"
+          />
+          <span className="deck-key-hint">RB</span>
         </div>
       </div>
 
@@ -415,12 +499,18 @@ function DeckBankPaneContent({ cursor, isActivePane, lassoArea, bankZoomed }: De
               col >= lassoArea.startCol &&
               col <= lassoArea.endCol
 
+            const uniqueKey = identifier ?? `${currentBoxIndex}-${index}`
+
             return (
               <div
-                key={`home_${currentBoxIndex}_${index}`}
+                key={`deck_home_slot_${currentBoxIndex}_${index}`}
                 ref={isFocused ? focusedSlotRef : undefined}
                 className={`deck-slot ${isFocused ? 'focused' : ''} ${isLassoed ? 'lasso-highlight' : ''} ${isSelected(location) ? 'selected' : ''}`}
                 tabIndex={isFocused ? 0 : -1}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleCellClick('bank', row, col)
+                }}
               >
                 {isFocused && heldPayload && (
                   <span className="deck-held-badge" title="Holding Pokémon">
@@ -428,14 +518,15 @@ function DeckBankPaneContent({ cursor, isActivePane, lassoArea, bankZoomed }: De
                   </span>
                 )}
                 <BoxCellAsync
+                  key={uniqueKey}
                   location={location}
                   monPromise={monPromise}
                   openhomeId={identifier}
                   dragID={`home_${currentBoxIndex}_${index}`}
                   isDisabled={(mon) => mon !== undefined && !sourceSupportsMon(mon)}
-                  onClick={() => {}}
+                  onClick={() => handleCellClick('bank', row, col)}
                   onDrop={(importedMons) => {
-                    if (importedMons) importMonsToLocation(importedMons, location)
+                    if (importedMons) void importMonsToLocation(importedMons, location)
                   }}
                   multiSelectEnabled={multiSelectState.multiSelectEnabled}
                   isSelected={isSelected(location)}
@@ -462,9 +553,17 @@ function DeckEmptySavePrompt({ onOpenSave }: DeckEmptySavePromptProps) {
     <div className="deck-empty-save">
       <h3>No Save File Open</h3>
       <p style={{ color: '#94a3b8', fontSize: '0.88rem', maxWidth: '280px' }}>
-        Open a game save file from an emulator or flashcart to transfer Pokémon between your game and OpenHome Bank.
+        Open a game save file from an emulator or flashcart to transfer Pokémon between your game
+        and OpenHome Bank.
       </p>
-      <button className="deck-top-btn" onClick={onOpenSave} style={{ padding: '8px 16px', fontSize: '0.95rem' }}>
+      <button
+        className="deck-top-btn"
+        onClick={(e) => {
+          e.stopPropagation()
+          onOpenSave()
+        }}
+        style={{ padding: '8px 16px', fontSize: '0.95rem' }}
+      >
         <MdFileOpen style={{ fontSize: '1.2rem' }} /> Open Save File (Select)
       </button>
     </div>

@@ -12,7 +12,7 @@ import {
 import { useDragStore } from '@openhome-ui/state-zustand/drag-and-drop/dragStore'
 import useMultiSelect from '@openhome-ui/state/drag-and-drop/useMultiSelect'
 import { HomeMonLocation, MonLocation, SaveMonLocation, useSaves } from '@openhome-ui/state/saves'
-import React, {
+import {
   createContext,
   ReactNode,
   useCallback,
@@ -34,7 +34,9 @@ interface GamepadNavigationContextType {
   setActivePane: (pane: DeckPane) => void
 
   saveCursor: GridCoord
+  setSaveCursor: (coord: GridCoord) => void
   bankCursor: GridCoord
+  setBankCursor: (coord: GridCoord) => void
   activeCursor: GridCoord
 
   activeSaveIndex: number
@@ -53,6 +55,8 @@ interface GamepadNavigationContextType {
   setSaveModalOpen: (open: boolean) => void
 
   activeLocation: MonLocation | null
+  handleCellClick: (pane: DeckPane, row: number, col: number) => void
+  releaseActiveOrSelectedMons: () => Promise<void>
 }
 
 const GamepadNavigationContext = createContext<GamepadNavigationContextType | null>(null)
@@ -69,8 +73,14 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
   const backend = useBackend()
   const displayError = useDisplayError()
   const savesManager = useSaves()
-  const { allOpenSaves, saveBoxNavigateLeft, saveBoxNavigateRight, moveMon, getMonAtLocation } =
-    savesManager
+  const {
+    allOpenSaves,
+    saveBoxNavigateLeft,
+    saveBoxNavigateRight,
+    moveMon,
+    getMonAtLocation,
+    releaseMonAtLocation,
+  } = savesManager
   const banksAndBoxes = useBanksAndBoxes()
   const {
     getCurrentBank,
@@ -90,8 +100,12 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
   // Deck mode initial detection: SteamOS Gamescope is typically 1280x800
   const [deckModeEnabled, setDeckModeEnabledState] = useState(() => {
     if (typeof window === 'undefined') return false
-    const saved = localStorage.getItem('openhome_deck_mode')
-    if (saved !== null) return saved === 'true'
+    try {
+      const saved = localStorage.getItem('openhome_deck_mode')
+      if (saved !== null) return saved === 'true'
+    } catch {
+      // ignore localStorage errors
+    }
     return window.innerWidth <= 1280 && window.innerHeight <= 820
   })
 
@@ -128,31 +142,42 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
 
   const activeCursor = activePane === 'save' ? saveCursor : bankCursor
 
+  const buildLocation = useCallback(
+    (pane: DeckPane, row: number, col: number): MonLocation | null => {
+      if (pane === 'save') {
+        if (!activeSave) return null
+        const boxSlot = row * saveCols + col
+        const loc: SaveMonLocation = {
+          isHome: false,
+          saveIdentifier: activeSave.identifier,
+          box: activeSave.currentPCBox,
+          boxSlot,
+        }
+        return loc
+      } else {
+        const currentBank = getCurrentBank()
+        const currentBox = getCurrentBox()
+        const boxSlot = row * bankCols + col
+        const loc: HomeMonLocation = {
+          isHome: true,
+          bank: currentBank.index,
+          box: currentBox.index,
+          boxSlot,
+        }
+        return loc
+      }
+    },
+    [activeSave, saveCols, getCurrentBank, getCurrentBox, bankCols]
+  )
+
   // Compute active MonLocation based on active pane and cursor
   const activeLocation = useMemo<MonLocation | null>(() => {
-    if (activePane === 'save') {
-      if (!activeSave) return null
-      const boxSlot = saveCursor.row * saveCols + saveCursor.col
-      const loc: SaveMonLocation = {
-        isHome: false,
-        saveIdentifier: activeSave.identifier,
-        box: activeSave.currentPCBox,
-        boxSlot,
-      }
-      return loc
-    } else {
-      const currentBank = getCurrentBank()
-      const currentBox = getCurrentBox()
-      const boxSlot = bankCursor.row * bankCols + bankCursor.col
-      const loc: HomeMonLocation = {
-        isHome: true,
-        bank: currentBank.index,
-        box: currentBox.index,
-        boxSlot,
-      }
-      return loc
-    }
-  }, [activePane, activeSave, saveCursor, saveCols, getCurrentBank, getCurrentBox, bankCursor, bankCols])
+    return buildLocation(
+      activePane,
+      activePane === 'save' ? saveCursor.row : bankCursor.row,
+      activePane === 'save' ? saveCursor.col : bankCursor.col
+    )
+  }, [activePane, buildLocation, saveCursor, bankCursor])
 
   // Compute current lasso area if dragging with Y held
   const lassoArea = useMemo<LassoArea | null>(() => {
@@ -167,156 +192,240 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
     }
   }, [lassoAnchor, activePane, saveCursor, bankCursor])
 
-  // Pick up & Drop execution
-  const handleConfirmAction = useCallback(async () => {
-    if (!activeLocation) return
+  // Execute pick up or place at a given target location
+  const executePickUpOrPlaceAt = useCallback(
+    async (targetLocation: MonLocation) => {
+      // If nothing currently held, pick up mon(s)
+      if (!heldPayload) {
+        // Case A: Batch pick-up from multi-select
+        if (multiSelectState.selectedLocations.length > 0) {
+          const firstLoc = multiSelectState.selectedLocations[0]
+          const firstMon = await getMonAtLocation(firstLoc)
+          if (firstMon) {
+            const payload: HeldMonPayload = {
+              sourceLocation: firstLoc,
+              mon: firstMon,
+              multiLocations: [...multiSelectState.selectedLocations],
+            }
+            setHeldPayload(payload)
+            useDragStore.setState({
+              payload: {
+                kind: 'multi-mon',
+                monData: multiSelectState.selectedLocations.map((loc) => ({
+                  ...loc,
+                  mon: firstMon,
+                })),
+              },
+            })
+          }
+          return
+        }
 
-    // If nothing currently held, pick up mon(s)
-    if (!heldPayload) {
-      // Case A: Batch pick-up from multi-select
-      if (multiSelectState.selectedLocations.length > 0) {
-        const firstLoc = multiSelectState.selectedLocations[0]
-        const firstMon = await getMonAtLocation(firstLoc)
-        if (firstMon) {
+        // Case B: Single mon pick-up
+        const currentMon = await getMonAtLocation(targetLocation)
+        if (currentMon) {
           const payload: HeldMonPayload = {
-            sourceLocation: firstLoc,
-            mon: firstMon,
-            multiLocations: [...multiSelectState.selectedLocations],
+            sourceLocation: targetLocation,
+            mon: currentMon,
           }
           setHeldPayload(payload)
           useDragStore.setState({
             payload: {
-              kind: 'multi-mon',
-              monData: multiSelectState.selectedLocations.map((loc) => ({
-                ...loc,
-                mon: firstMon,
-              })),
+              kind: 'mon',
+              monData: { ...targetLocation, mon: currentMon },
             },
           })
         }
         return
       }
 
-      // Case B: Single mon pick-up
-      const currentMon = await getMonAtLocation(activeLocation)
-      if (currentMon) {
-        const payload: HeldMonPayload = {
-          sourceLocation: activeLocation,
-          mon: currentMon,
+      // Placing held mon(s) at targetLocation
+      const dest = targetLocation
+      const source = heldPayload.sourceLocation
+
+      // If target save doesn't support the mon, block placement
+      if (!dest.isHome) {
+        const targetSave = savesManager.saveFromIdentifier(dest.saveIdentifier)
+        if (!monSupportedBySave(targetSave, heldPayload.mon)) {
+          displayError(
+            'Unsupported Pokémon',
+            `${heldPayload.mon.nickname} cannot be moved into ${targetSave.gameNameFull}`
+          )
+          return
         }
-        setHeldPayload(payload)
-        useDragStore.setState({
-          payload: {
-            kind: 'mon',
-            monData: { ...activeLocation, mon: currentMon },
-          },
-        })
       }
-      return
-    }
 
-    // Placing held mon(s) at activeLocation
-    const dest = activeLocation
-    const source = heldPayload.sourceLocation
+      // Batch placement
+      if (heldPayload.multiLocations && heldPayload.multiLocations.length > 0) {
+        const targetSave = dest.isHome
+          ? undefined
+          : savesManager.saveFromIdentifier(dest.saveIdentifier)
 
-    // If target save doesn't support the mon, block placement
-    if (!dest.isHome) {
-      const targetSave = savesManager.saveFromIdentifier(dest.saveIdentifier)
-      if (!monSupportedBySave(targetSave, heldPayload.mon)) {
-        displayError('Unsupported Pokémon', `${heldPayload.mon.nickname} cannot be moved into ${targetSave.gameNameFull}`)
-        return
-      }
-    }
-
-    // Batch placement
-    if (heldPayload.multiLocations && heldPayload.multiLocations.length > 0) {
-      const targetSave = dest.isHome ? undefined : savesManager.saveFromIdentifier(dest.saveIdentifier)
-
-      const nextSaveDestination = (startBox: number, startSlot: number): MonLocation | null => {
-        if (!targetSave) return null
-        for (let box = startBox; box < targetSave.getBoxCount(); box++) {
-          const slotStart = box === startBox ? startSlot : 0
-          for (let boxSlot = slotStart; boxSlot < targetSave.boxSlotCount; boxSlot++) {
-            if (!targetSave.getMonAt(box, boxSlot)) {
-              return { isHome: false, saveIdentifier: targetSave.identifier, box, boxSlot }
+        const nextSaveDestination = (startBox: number, startSlot: number): MonLocation | null => {
+          if (!targetSave) return null
+          for (let box = startBox; box < targetSave.getBoxCount(); box++) {
+            const slotStart = box === startBox ? startSlot : 0
+            for (let boxSlot = slotStart; boxSlot < targetSave.boxSlotCount; boxSlot++) {
+              if (!targetSave.getMonAt(box, boxSlot)) {
+                return { isHome: false, saveIdentifier: targetSave.identifier, box, boxSlot }
+              }
             }
           }
+          return null
         }
-        return null
-      }
 
-      const nextHomeDestination = (startBox: number, startSlot: number): MonLocation | null => {
-        if (!dest.isHome) return null
-        const currentBank = getCurrentBank()
-        const bank = dest.bank
-        for (let box = startBox; box < currentBank.boxes.size; box++) {
-          const slotStart = box === startBox ? startSlot : 0
-          for (let boxSlot = slotStart; boxSlot < OPENHOME_BOX_SLOTS; boxSlot++) {
-            const loc = { bank, box, boxSlot }
-            if (homeLocationIsEmpty(loc)) return { isHome: true, ...loc }
+        const nextHomeDestination = (startBox: number, startSlot: number): MonLocation | null => {
+          if (!dest.isHome) return null
+          const currentBank = getCurrentBank()
+          const bank = dest.bank
+          for (let box = startBox; box < currentBank.boxes.size; box++) {
+            const slotStart = box === startBox ? startSlot : 0
+            for (let boxSlot = slotStart; boxSlot < OPENHOME_BOX_SLOTS; boxSlot++) {
+              const loc = { bank, box, boxSlot }
+              if (homeLocationIsEmpty(loc)) return { isHome: true, ...loc }
+            }
           }
+          return null
         }
-        return null
+
+        let nextDest: MonLocation | null = dest.isHome
+          ? nextHomeDestination(dest.box, dest.boxSlot)
+          : nextSaveDestination(dest.box, dest.boxSlot)
+
+        for (const srcLoc of heldPayload.multiLocations) {
+          if (!nextDest) break
+          const currMon = await getMonAtLocation(srcLoc)
+          if (!currMon) continue
+
+          if (
+            !dest.isHome &&
+            targetSave &&
+            !targetSave.supportsMon(currMon.nationalDex, currMon.formIndex)
+          ) {
+            continue
+          }
+
+          if (
+            currMon.heldItemIndex &&
+            !dest.isHome &&
+            targetSave &&
+            !targetSave.supportsItem(currMon.heldItemIndex)
+          ) {
+            await savesManager.moveMonItemToBag(srcLoc)
+          }
+
+          await moveMon({ ...srcLoc, mon: currMon }, nextDest).then(
+            R.mapErr((err) => displayError('Could not move Pokémon', err))
+          )
+
+          nextDest = nextDest.isHome
+            ? nextHomeDestination(nextDest.box, nextDest.boxSlot + 1)
+            : nextSaveDestination(nextDest.box, nextDest.boxSlot + 1)
+        }
+
+        clearSelections()
+        setMultiSelectEnabled(false)
+        setHeldPayload(null)
+        useDragStore.setState({ payload: undefined, overId: undefined })
+        return
       }
 
-      let nextDest: MonLocation | null = dest.isHome
-        ? nextHomeDestination(dest.box, dest.boxSlot)
-        : nextSaveDestination(dest.box, dest.boxSlot)
-
-      for (const srcLoc of heldPayload.multiLocations) {
-        if (!nextDest) break
-        const currMon = await getMonAtLocation(srcLoc)
-        if (!currMon) continue
-
-        if (!dest.isHome && targetSave && !targetSave.supportsMon(currMon.nationalDex, currMon.formIndex)) {
-          continue
-        }
-
-        if (currMon.heldItemIndex && !dest.isHome && targetSave && !targetSave.supportsItem(currMon.heldItemIndex)) {
-          await savesManager.moveMonItemToBag(srcLoc)
-        }
-
-        await moveMon({ ...srcLoc, mon: currMon }, nextDest).then(
-          R.mapErr((err) => displayError('Could not move Pokémon', err))
-        )
-
-        nextDest = nextDest.isHome
-          ? nextHomeDestination(nextDest.box, nextDest.boxSlot + 1)
-          : nextSaveDestination(nextDest.box, nextDest.boxSlot + 1)
+      // Single mon placement
+      if (
+        heldPayload.mon.heldItemIndex &&
+        !dest.isHome &&
+        !savesManager
+          .saveFromIdentifier(dest.saveIdentifier)
+          .supportsItem(heldPayload.mon.heldItemIndex)
+      ) {
+        await savesManager.moveMonItemToBag(source)
       }
 
-      clearSelections()
+      await moveMon({ ...source, mon: heldPayload.mon }, dest).then(
+        R.mapErr((err) => displayError('Could not move Pokémon', err))
+      )
+
       setHeldPayload(null)
       useDragStore.setState({ payload: undefined, overId: undefined })
+    },
+    [
+      heldPayload,
+      multiSelectState.selectedLocations,
+      getMonAtLocation,
+      savesManager,
+      displayError,
+      getCurrentBank,
+      homeLocationIsEmpty,
+      moveMon,
+      clearSelections,
+      setMultiSelectEnabled,
+    ]
+  )
+
+  const handleConfirmAction = useCallback(async () => {
+    if (!activeLocation) return
+    await executePickUpOrPlaceAt(activeLocation)
+  }, [activeLocation, executePickUpOrPlaceAt])
+
+  // Mouse / Touchscreen click support in Deck Mode
+  const handleCellClick = useCallback(
+    (pane: DeckPane, row: number, col: number) => {
+      const wasAlreadyFocused =
+        activePane === pane &&
+        (pane === 'save'
+          ? saveCursor.row === row && saveCursor.col === col
+          : bankCursor.row === row && bankCursor.col === col)
+
+      setActivePane(pane)
+      if (pane === 'save') {
+        setSaveCursor({ row, col })
+      } else {
+        setBankCursor({ row, col })
+      }
+
+      const targetLoc = buildLocation(pane, row, col)
+      if (!targetLoc) return
+
+      if (heldPayload) {
+        void executePickUpOrPlaceAt(targetLoc)
+      } else if (wasAlreadyFocused) {
+        void getMonAtLocation(targetLoc).then((mon) => {
+          if (mon) setDetailsModalMon(mon)
+        })
+      }
+    },
+    [
+      activePane,
+      saveCursor,
+      bankCursor,
+      buildLocation,
+      heldPayload,
+      executePickUpOrPlaceAt,
+      getMonAtLocation,
+    ]
+  )
+
+  const releaseActiveOrSelectedMons = useCallback(async () => {
+    if (multiSelectState.selectedLocations.length > 0) {
+      for (const loc of multiSelectState.selectedLocations) {
+        const mon = await getMonAtLocation(loc)
+        if (mon) releaseMonAtLocation(loc)
+      }
+      clearSelections()
+      setMultiSelectEnabled(false)
       return
     }
-
-    // Single mon placement
-    if (
-      heldPayload.mon.heldItemIndex &&
-      !dest.isHome &&
-      !savesManager.saveFromIdentifier(dest.saveIdentifier).supportsItem(heldPayload.mon.heldItemIndex)
-    ) {
-      await savesManager.moveMonItemToBag(source)
+    if (activeLocation) {
+      const mon = await getMonAtLocation(activeLocation)
+      if (mon) releaseMonAtLocation(activeLocation)
     }
-
-    await moveMon({ ...source, mon: heldPayload.mon }, dest).then(
-      R.mapErr((err) => displayError('Could not move Pokémon', err))
-    )
-
-    setHeldPayload(null)
-    useDragStore.setState({ payload: undefined, overId: undefined })
   }, [
-    activeLocation,
-    heldPayload,
     multiSelectState.selectedLocations,
+    activeLocation,
     getMonAtLocation,
-    savesManager,
-    displayError,
-    getCurrentBank,
-    homeLocationIsEmpty,
-    moveMon,
+    releaseMonAtLocation,
     clearSelections,
+    setMultiSelectEnabled,
   ])
 
   // Cancel action
@@ -325,17 +434,29 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
       setDetailsModalMon(null)
       return
     }
+    if (saveModalOpen) {
+      setSaveModalOpen(false)
+      return
+    }
     if (heldPayload) {
       setHeldPayload(null)
       useDragStore.setState({ payload: undefined, overId: undefined })
       return
     }
-    if (multiSelectState.selectedLocations.length > 0) {
+    if (multiSelectState.selectedLocations.length > 0 || multiSelectState.multiSelectEnabled) {
       clearSelections()
       setMultiSelectEnabled(false)
       return
     }
-  }, [detailsModalMon, heldPayload, multiSelectState.selectedLocations.length, clearSelections, setMultiSelectEnabled])
+  }, [
+    detailsModalMon,
+    saveModalOpen,
+    heldPayload,
+    multiSelectState.selectedLocations.length,
+    multiSelectState.multiSelectEnabled,
+    clearSelections,
+    setMultiSelectEnabled,
+  ])
 
   // Move grid cursor with bounds checking
   const moveCursor = useCallback(
@@ -357,10 +478,11 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
 
   // Lasso start and end handlers
   const handleYHoldStart = useCallback(() => {
+    if (!deckModeEnabled) return
     setMultiSelectEnabled(true)
     const current = activePane === 'save' ? saveCursor : bankCursor
     setLassoAnchor({ ...current })
-  }, [activePane, saveCursor, bankCursor, setMultiSelectEnabled])
+  }, [deckModeEnabled, activePane, saveCursor, bankCursor, setMultiSelectEnabled])
 
   const handleYHoldEnd = useCallback(async () => {
     if (!lassoAnchor) return
@@ -370,28 +492,10 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
     const minCol = Math.min(lassoAnchor.col, current.col)
     const maxCol = Math.max(lassoAnchor.col, current.col)
 
-    const cols = activePane === 'save' ? saveCols : bankCols
-
     for (let r = minRow; r <= maxRow; r++) {
       for (let c = minCol; c <= maxCol; c++) {
-        const slot = r * cols + c
-        let loc: MonLocation
-        if (activePane === 'save') {
-          if (!activeSave) continue
-          loc = {
-            isHome: false,
-            saveIdentifier: activeSave.identifier,
-            box: activeSave.currentPCBox,
-            boxSlot: slot,
-          }
-        } else {
-          loc = {
-            isHome: true,
-            bank: getCurrentBank().index,
-            box: getCurrentBox().index,
-            boxSlot: slot,
-          }
-        }
+        const loc = buildLocation(activePane, r, c)
+        if (!loc) continue
         const mon = await getMonAtLocation(loc)
         if (mon && !isSelected(loc)) {
           toggleSelection(loc)
@@ -405,11 +509,7 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
     activePane,
     saveCursor,
     bankCursor,
-    saveCols,
-    bankCols,
-    activeSave,
-    getCurrentBank,
-    getCurrentBox,
+    buildLocation,
     getMonAtLocation,
     isSelected,
     toggleSelection,
@@ -424,16 +524,34 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
 
   // Open Pokemon summary modal
   const handleSummaryAction = useCallback(async () => {
+    if (detailsModalMon) {
+      setDetailsModalMon(null)
+      return
+    }
     if (!activeLocation) return
     const mon = await getMonAtLocation(activeLocation)
     if (mon) {
       setDetailsModalMon(mon)
     }
-  }, [activeLocation, getMonAtLocation])
+  }, [detailsModalMon, activeLocation, getMonAtLocation])
 
   // Gamepad action dispatcher
   const handleAction = useCallback(
     (action: string) => {
+      if (!deckModeEnabled) return
+
+      // When a modal is open, only allow cancel or summary toggle
+      if (detailsModalMon || saveModalOpen) {
+        if (action === 'cancel') {
+          handleCancelAction()
+        } else if (action === 'summary' && detailsModalMon) {
+          setDetailsModalMon(null)
+        } else if (action === 'openSave' && saveModalOpen) {
+          setSaveModalOpen(false)
+        }
+        return
+      }
+
       switch (action) {
         case 'up':
           moveCursor(-1, 0)
@@ -448,7 +566,11 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
           moveCursor(0, 1)
           break
         case 'confirm':
-          void handleConfirmAction()
+          if (activePane === 'save' && !activeSave) {
+            setSaveModalOpen(true)
+          } else {
+            void handleConfirmAction()
+          }
           break
         case 'cancel':
           handleCancelAction()
@@ -491,13 +613,16 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
       }
     },
     [
+      deckModeEnabled,
+      detailsModalMon,
+      saveModalOpen,
       moveCursor,
+      activePane,
+      activeSave,
       handleConfirmAction,
       handleCancelAction,
       handleSelectAction,
       handleSummaryAction,
-      activePane,
-      activeSave,
       saveBoxNavigateLeft,
       saveBoxNavigateRight,
       switchToPreviousBox,
@@ -506,19 +631,12 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
     ]
   )
 
-  const handleGamepadActivity = useCallback(() => {
-    if (!deckModeEnabled) {
-      // Auto-enable deck mode upon detecting gamepad input if preferred
-    }
-  }, [deckModeEnabled])
-
-  // Register gamepad & keyboard input engine
+  // Register gamepad & keyboard input engine (only active when deckModeEnabled is true)
   useGamepadInput({
-    enabled: true,
+    enabled: deckModeEnabled,
     onAction: handleAction,
     onYHoldStart: handleYHoldStart,
     onYHoldEnd: () => void handleYHoldEnd(),
-    onGamepadActivity: handleGamepadActivity,
   })
 
   // Keep held mon visual over active cursor for drag compatibility styling
@@ -542,7 +660,9 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
       activePane,
       setActivePane,
       saveCursor,
+      setSaveCursor,
       bankCursor,
+      setBankCursor,
       activeCursor,
       activeSaveIndex,
       setActiveSaveIndex,
@@ -555,6 +675,8 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
       saveModalOpen,
       setSaveModalOpen,
       activeLocation,
+      handleCellClick,
+      releaseActiveOrSelectedMons,
     }),
     [
       deckModeEnabled,
@@ -571,6 +693,8 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
       detailsModalMon,
       saveModalOpen,
       activeLocation,
+      handleCellClick,
+      releaseActiveOrSelectedMons,
     ]
   )
 

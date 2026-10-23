@@ -60,8 +60,8 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(30, 41, 59, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   color: #fff;
   padding: 4px 10px;
   border-radius: 6px;
@@ -71,9 +71,14 @@
   transition: all 0.15s ease;
 }
 
+.deck-top-btn option {
+  background: #1e293b;
+  color: #fff;
+}
+
 .deck-top-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-  border-color: rgba(255, 255, 255, 0.3);
+  background: rgba(51, 65, 85, 0.95);
+  border-color: rgba(255, 255, 255, 0.35);
 }
 
 .deck-top-btn.active {
@@ -86,7 +91,7 @@
 .deck-dual-panes {
   display: flex;
   flex: 1;
-  height: calc(100vh - 42px - 44px);
+  min-height: 0;
   padding: 10px 14px;
   gap: 14px;
   overflow: hidden;
@@ -96,19 +101,23 @@
 .deck-pane {
   display: flex;
   flex-direction: column;
-  background: rgba(30, 41, 59, 0.75);
+  background: rgba(15, 23, 42, 0.78);
   border-radius: 10px;
-  border: 2px solid rgba(255, 255, 255, 0.08);
+  border: 2px solid rgba(255, 255, 255, 0.1);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   padding: 8px;
   overflow: hidden;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
   position: relative;
 }
 
 .deck-pane.active-pane {
   border-color: #38bdf8;
-  box-shadow: 0 0 0 1px #38bdf8, 0 8px 24px rgba(56, 189, 248, 0.2);
+  box-shadow:
+    0 0 0 1px #38bdf8,
+    0 8px 24px rgba(56, 189, 248, 0.2);
 }
 
 .deck-pane-save {
@@ -126,9 +135,10 @@
   align-items: center;
   justify-content: space-between;
   padding: 4px 8px 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   margin-bottom: 8px;
   height: 34px;
+  flex-shrink: 0;
 }
 
 .deck-pane-title-group {
@@ -168,12 +178,13 @@
   padding: 1px 5px;
   font-size: 0.7rem;
   font-weight: 700;
-  color: #94a3b8;
+  color: #cbd5e1;
 }
 
 /* --- Box Grids --- */
 .deck-grid-wrapper {
   flex: 1;
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -184,66 +195,80 @@
 
 /* Save Grid (6x5 standard) */
 .deck-save-grid {
+  --box-cell-size: 3.4rem;
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 4px;
-  width: 100%;
-  max-width: 440px;
+  grid-template-columns: repeat(6, var(--box-cell-size));
+  gap: 5px;
+  justify-content: center;
   margin: auto;
 }
 
 .deck-save-grid-5col {
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(5, var(--box-cell-size));
 }
 
 /* Bank Grid (12x10 compact for 1280x800) */
 .deck-bank-grid {
+  --box-cell-size: 2.65rem;
   display: grid;
-  grid-template-columns: repeat(12, 1fr);
+  grid-template-columns: repeat(12, var(--box-cell-size));
   gap: 3px;
-  width: 100%;
-  max-width: 660px;
+  justify-content: center;
   margin: auto;
 }
 
 .deck-bank-grid.zoomed {
-  grid-template-columns: repeat(12, minmax(46px, 1fr));
-  width: max-content;
+  --box-cell-size: 3.5rem;
+  grid-template-columns: repeat(12, var(--box-cell-size));
+  margin: 0;
 }
 
 /* Slot Styling */
 .deck-slot {
   position: relative;
-  aspect-ratio: 1;
+  width: var(--box-cell-size);
+  height: var(--box-cell-size);
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: transform 0.1s ease, border-color 0.1s ease;
+  transition:
+    transform 0.08s ease,
+    border-color 0.08s ease;
   overflow: visible;
   outline: none;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+
+.deck-slot .box-cell,
+.deck-slot .box-cell-loading {
+  width: 100% !important;
+  height: 100% !important;
 }
 
 .deck-slot:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .deck-slot.focused {
   border-color: #38bdf8 !important;
-  box-shadow: 0 0 0 3px #38bdf8, 0 0 14px rgba(56, 189, 248, 0.6) !important;
+  box-shadow:
+    0 0 0 3px #38bdf8,
+    0 0 14px rgba(56, 189, 248, 0.7) !important;
   z-index: 5;
-  transform: scale(1.05);
+  transform: scale(1.06);
 }
 
 .deck-slot.selected {
-  background: rgba(74, 222, 128, 0.25) !important;
+  background: rgba(74, 222, 128, 0.28) !important;
   border-color: #4ade80 !important;
 }
 
 .deck-slot.lasso-highlight {
-  background: rgba(56, 189, 248, 0.3) !important;
+  background: rgba(56, 189, 248, 0.35) !important;
   border-color: #38bdf8 !important;
 }
 
@@ -269,8 +294,13 @@
 }
 
 @keyframes pulse-held {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.15); }
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.15);
+  }
 }
 
 /* --- Controller HUD Bar --- */
@@ -280,8 +310,9 @@
   justify-content: space-around;
   height: 44px;
   min-height: 44px;
+  flex-shrink: 0;
   background-color: rgba(15, 23, 42, 0.95);
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
   padding: 0 16px;
   gap: 8px;
   z-index: 10;
@@ -309,10 +340,18 @@
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
-.deck-glyph-a { background: #10b981; }
-.deck-glyph-b { background: #ef4444; }
-.deck-glyph-x { background: #3b82f6; }
-.deck-glyph-y { background: #f59e0b; }
+.deck-glyph-a {
+  background: #10b981;
+}
+.deck-glyph-b {
+  background: #ef4444;
+}
+.deck-glyph-x {
+  background: #3b82f6;
+}
+.deck-glyph-y {
+  background: #f59e0b;
+}
 .deck-glyph-pill {
   border-radius: 4px;
   width: auto;
@@ -331,34 +370,6 @@
   padding: 16px;
   text-align: center;
   gap: 12px;
-}
-
-.deck-quick-saves-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  width: 100%;
-  max-width: 320px;
-  margin-top: 8px;
-}
-
-.deck-quick-save-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.deck-quick-save-item:hover,
-.deck-quick-save-item.focused {
-  background: rgba(56, 189, 248, 0.15);
-  border-color: #38bdf8;
-  transform: translateX(4px);
 }
 
 /* --- Floating Deck Mode Toggle Button (Desktop Mode) --- */

@@ -1,8 +1,8 @@
+import Fallback from '@openhome-ui/components/Fallback'
 import { ReactNode } from 'react'
 import { useLocation } from 'react-router'
 import '../deck-ui.css'
 import { GamepadNavigationProvider, useGamepadNavigation } from '../state/GamepadNavigationContext'
-import ControllerHudBar from './ControllerHudBar'
 import DeckHomeView from './DeckHomeView'
 
 interface DeckModeWrapperProps {
@@ -24,10 +24,9 @@ function DeckModeWrapperInner({ children }: { children: ReactNode }) {
 
   if (deckModeEnabled && isHomeRoute) {
     return (
-      <div style={{ width: '100vw', height: '100vh', overflow: 'hidden' }}>
+      <Fallback>
         <DeckHomeView />
-        <ControllerHudBar />
-      </div>
+      </Fallback>
     )
   }
 
