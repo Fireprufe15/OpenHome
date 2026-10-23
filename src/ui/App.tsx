@@ -23,6 +23,7 @@ import { useCallback, useEffect, useEffectEvent, useReducer, useState } from 're
 import BanksAndBoxesProvider from './state-zustand/banks-and-boxes/Provider'
 import { useBanksAndBoxes } from './state-zustand/banks-and-boxes/store'
 import ConvertStrategiesProvider from './state/convert-strategies/ConvertStrategiesProvider'
+import DeckModeWrapper from '../deck-ui/components/DeckModeWrapper'
 import {
   defaultMultiSelectState,
   MultiSelectContext,
@@ -187,7 +188,9 @@ function AppWithBackend() {
                             </Text>
                           </Flex>
                         ) : (
-                          <AppTabs />
+                          <DeckModeWrapper>
+                            <AppTabs />
+                          </DeckModeWrapper>
                         )}
                         <ErrorMessageModal />
                         <UpdateMessageModal />

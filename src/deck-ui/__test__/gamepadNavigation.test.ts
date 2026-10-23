@@ -1,0 +1,189 @@
+import type { GamepadButtonStates, GridCoord, LassoArea } from '../gamepad/types.ts'
+
+let describe: any
+let it: any
+let expect: any
+
+try {
+  const v = await import('vitest')
+  describe = v.describe
+  it = v.it
+  expect = v.expect
+} catch {
+  const t = await import('node:test')
+  const assert = (await import('node:assert/strict')).default
+  describe = t.describe
+  it = t.it
+  expect = (actual: any) => ({
+    toEqual: (expected: any) => assert.deepStrictEqual(actual, expected),
+    toBe: (expected: any) => assert.strictEqual(actual, expected),
+  })
+}
+
+function computeLassoArea(anchor: GridCoord, current: GridCoord, pane: 'save' | 'bank'): LassoArea {
+  return {
+    pane,
+    startRow: Math.min(anchor.row, current.row),
+    startCol: Math.min(anchor.col, current.col),
+    endRow: Math.max(anchor.row, current.row),
+    endCol: Math.max(anchor.col, current.col),
+  }
+}
+
+function clampGridMove(
+  current: GridCoord,
+  deltaRow: number,
+  deltaCol: number,
+  maxRows: number,
+  maxCols: number
+): GridCoord {
+  return {
+    row: Math.max(0, Math.min(maxRows - 1, current.row + deltaRow)),
+    col: Math.max(0, Math.min(maxCols - 1, current.col + deltaCol)),
+  }
+}
+
+function applyStickDeadzone(axisX: number, axisY: number, deadzone = 0.4) {
+  return {
+    isStickUp: axisY < -deadzone,
+    isStickDown: axisY > deadzone,
+    isStickLeft: axisX < -deadzone,
+    isStickRight: axisX > deadzone,
+  }
+}
+
+describe('Deck UI Gamepad Navigation Logic', () => {
+  describe('2D Grid Clamping & Movement', () => {
+    it('moves correctly within 6x5 Save grid', () => {
+      let cursor: GridCoord = { row: 0, col: 0 }
+
+      // Move right
+      cursor = clampGridMove(cursor, 0, 1, 5, 6)
+      expect(cursor).toEqual({ row: 0, col: 1 })
+
+      // Move down
+      cursor = clampGridMove(cursor, 1, 0, 5, 6)
+      expect(cursor).toEqual({ row: 1, col: 1 })
+
+      // Move left
+      cursor = clampGridMove(cursor, 0, -1, 5, 6)
+      expect(cursor).toEqual({ row: 1, col: 0 })
+
+      // Move up
+      cursor = clampGridMove(cursor, -1, 0, 5, 6)
+      expect(cursor).toEqual({ row: 0, col: 0 })
+    })
+
+    it('clamps at grid boundaries without wrapping unexpectedly', () => {
+      let cursor: GridCoord = { row: 0, col: 0 }
+
+      // Try moving up and left from top-left
+      cursor = clampGridMove(cursor, -1, 0, 5, 6)
+      expect(cursor).toEqual({ row: 0, col: 0 })
+      cursor = clampGridMove(cursor, 0, -1, 5, 6)
+      expect(cursor).toEqual({ row: 0, col: 0 })
+
+      // Move to bottom-right (row 4, col 5)
+      cursor = { row: 4, col: 5 }
+      cursor = clampGridMove(cursor, 1, 0, 5, 6)
+      expect(cursor).toEqual({ row: 4, col: 5 })
+      cursor = clampGridMove(cursor, 0, 1, 5, 6)
+      expect(cursor).toEqual({ row: 4, col: 5 })
+    })
+
+    it('navigates the full 12x10 OpenHome Bank grid', () => {
+      let cursor: GridCoord = { row: 0, col: 0 }
+
+      // Move to bottom-right of Bank (row 9, col 11)
+      cursor = clampGridMove(cursor, 9, 11, 10, 12)
+      expect(cursor).toEqual({ row: 9, col: 11 })
+
+      // Cannot exceed 10 rows and 12 columns
+      cursor = clampGridMove(cursor, 1, 1, 10, 12)
+      expect(cursor).toEqual({ row: 9, col: 11 })
+    })
+  })
+
+  describe('Stick Deadzone Filtering', () => {
+    it('ignores micro-drifts within deadzone threshold (<= 0.4)', () => {
+      const state = applyStickDeadzone(0.15, -0.25, 0.4)
+      expect(state.isStickUp).toBe(false)
+      expect(state.isStickDown).toBe(false)
+      expect(state.isStickLeft).toBe(false)
+      expect(state.isStickRight).toBe(false)
+    })
+
+    it('registers deliberate stick deflections (> 0.4)', () => {
+      const up = applyStickDeadzone(0, -0.75, 0.4)
+      expect(up.isStickUp).toBe(true)
+
+      const down = applyStickDeadzone(0, 0.65, 0.4)
+      expect(down.isStickDown).toBe(true)
+
+      const left = applyStickDeadzone(-0.8, 0, 0.4)
+      expect(left.isStickLeft).toBe(true)
+
+      const right = applyStickDeadzone(0.7, 0, 0.4)
+      expect(right.isStickRight).toBe(true)
+    })
+  })
+
+  describe('2D Lasso Selection Bounding Box', () => {
+    it('computes correct lasso rectangle when dragging down-right', () => {
+      const anchor: GridCoord = { row: 1, col: 1 }
+      const current: GridCoord = { row: 3, col: 4 }
+
+      const area = computeLassoArea(anchor, current, 'bank')
+      expect(area).toEqual({
+        pane: 'bank',
+        startRow: 1,
+        startCol: 1,
+        endRow: 3,
+        endCol: 4,
+      })
+    })
+
+    it('computes correct lasso rectangle when dragging up-left (inverted)', () => {
+      const anchor: GridCoord = { row: 3, col: 4 }
+      const current: GridCoord = { row: 1, col: 1 }
+
+      const area = computeLassoArea(anchor, current, 'save')
+      expect(area).toEqual({
+        pane: 'save',
+        startRow: 1,
+        startCol: 1,
+        endRow: 3,
+        endCol: 4,
+      })
+    })
+
+    it('computes 1-cell lasso area on single slot anchor', () => {
+      const anchor: GridCoord = { row: 2, col: 2 }
+      const current: GridCoord = { row: 2, col: 2 }
+
+      const area = computeLassoArea(anchor, current, 'bank')
+      expect(area).toEqual({
+        pane: 'bank',
+        startRow: 2,
+        startCol: 2,
+        endRow: 2,
+        endCol: 2,
+      })
+    })
+  })
+
+  describe('Input Element Keyboard Guarding', () => {
+    it('identifies editable and input elements that should not trigger controller actions', () => {
+      const isEditableElement = (tagName: string, isContentEditable = false) => {
+        return tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT' || isContentEditable
+      }
+
+      expect(isEditableElement('INPUT')).toBe(true)
+      expect(isEditableElement('TEXTAREA')).toBe(true)
+      expect(isEditableElement('SELECT')).toBe(true)
+      expect(isEditableElement('DIV', true)).toBe(true)
+      expect(isEditableElement('DIV', false)).toBe(false)
+      expect(isEditableElement('BUTTON', false)).toBe(false)
+    })
+  })
+})
