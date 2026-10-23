@@ -1,4 +1,5 @@
 import { PKM } from '@openhome-core/pkm/PKM'
+import { NationalDexMax } from '@openhome-core/resources/consts/NationalDex'
 import * as types from '@openhome-core/util/types'
 import { getDisplayID } from '@openhome-core/util/util'
 import { MonTag } from '@openhome-ui/util/tags'
@@ -60,6 +61,25 @@ function chain(sorters: PkmSorter[]): PkmSorter {
     }
 
     return 0
+  }
+}
+
+function sortByEgg(a: SortablePkmFields, b: SortablePkmFields) {
+  return Number(Boolean(a.isEgg)) - Number(Boolean(b.isEgg))
+}
+
+export const sortForLivingDex = chain([sortByEgg, sortByDexNum, sortByFormIndex])
+
+export const LIVING_DEX_BOX_COUNT = Math.ceil(NationalDexMax / 120)
+
+export function getLivingDexCoordinates(
+  nationalDex: number,
+  boxSlots: number = 120
+): { box: number; boxSlot: number } {
+  const dexIndex = nationalDex - 1
+  return {
+    box: Math.floor(dexIndex / boxSlots),
+    boxSlot: dexIndex % boxSlots,
   }
 }
 

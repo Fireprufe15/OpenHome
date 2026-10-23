@@ -24,6 +24,10 @@ import { ErrorContext } from '@openhome-ui/state/error'
 import { useOhpkmStore } from '@openhome-ui/state/ohpkm'
 import useOhpkmBatchIdLookup from '@openhome-ui/state/ohpkm/useOhpkmIdBatchLookup'
 import useTrackedDataRecovery from '@openhome-ui/state/ohpkm/useTrackedDataRecovery'
+import {
+  bankNameOrDefault,
+  useBanksAndBoxes,
+} from '@openhome-ui/state-zustand/banks-and-boxes/store'
 import { EMPTY_SLOT, MonLocation, useSaves } from '@openhome-ui/state/saves'
 import { colorIsDark } from '@openhome-ui/util/color'
 import { Button, Dialog, Flex, Grid, Separator } from '@radix-ui/themes'
@@ -401,6 +405,7 @@ type SaveHeaderProps = { save: SAV; setDetailsModal: (open: boolean) => void }
 function SaveHeader({ save, setDetailsModal }: SaveHeaderProps) {
   const savesManager = useSaves()
   const backend = useBackend()
+  const { banks } = useBanksAndBoxes()
 
   const currentBoxMonCount = save.getBoxMonCount(save.currentPCBox)
   const totalMonCount = save.getPcMonCount()
@@ -419,6 +424,18 @@ function SaveHeader({ save, setDetailsModal }: SaveHeaderProps) {
           savesManager.moveSaveToBank(save)
         })
       ),
+    Submenu.label('Move Missing to Bank...').with(
+      ...banks.map((bank) =>
+        Submenu.label(bankNameOrDefault(bank)).with(
+          Item.label('All Missing Species').action(() => {
+            savesManager.moveMissingToBank(save, bank.index, false)
+          }),
+          Item.label('Only Duplicates (2+ in Save)').action(() => {
+            savesManager.moveMissingToBank(save, bank.index, true)
+          })
+        )
+      )
+    ),
   ]
 
   const gameColorIsDark = colorIsDark(save.gameColor)

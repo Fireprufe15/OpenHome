@@ -22,6 +22,7 @@ import {
   CtxMenuElementBuilder,
   Item,
   OpenHomeCtxMenu,
+  Separator,
   Submenu,
 } from '@openhome-ui/components/context-menu'
 import { RemoveIcon } from '@openhome-ui/components/Icons'
@@ -295,9 +296,11 @@ function calculateNewBoxOrder(movedFromIndex: number, movedIntoIndex: number, bo
 }
 
 function useSaveContextActions() {
-  const { sortAllHomeBoxes, addBoxCurrentBank } = useBanksAndBoxes()
+  const { sortAllHomeBoxes, sortAllHomeBoxesLivingDex, addBoxCurrentBank } = useBanksAndBoxes()
   return [
     Submenu.label('Sort all boxes...').with(
+      Item.label('By National Living Dex').action(sortAllHomeBoxesLivingDex),
+      Separator,
       ...SortTypes.map((sortType) =>
         Item.label(`By ${sortType}`).action(() => sortAllHomeBoxes(sortType))
       )
@@ -310,8 +313,13 @@ function useSaveContextActions() {
 }
 
 function useBoxContextActions(box: SimpleOpenHomeBox): CtxMenuElementBuilder[][] {
-  const { sortHomeBox, sortAllHomeBoxes, deleteBoxCurrentBank, addBoxCurrentBank } =
-    useBanksAndBoxes()
+  const {
+    sortHomeBox,
+    sortAllHomeBoxes,
+    sortAllHomeBoxesLivingDex,
+    deleteBoxCurrentBank,
+    addBoxCurrentBank,
+  } = useBanksAndBoxes()
 
   const boxIsEmpty = box.identifiers.size === 0
   const boxActions = [
@@ -323,6 +331,8 @@ function useBoxContextActions(box: SimpleOpenHomeBox): CtxMenuElementBuilder[][]
       )
       .disabled(boxIsEmpty),
     Submenu.label('Sort all boxes...').with(
+      Item.label('By National Living Dex').action(sortAllHomeBoxesLivingDex),
+      Separator,
       ...SortTypes.map((sortType) =>
         Item.label(`By ${sortType}`).action(() => sortAllHomeBoxes(sortType))
       )

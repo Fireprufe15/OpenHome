@@ -66,6 +66,7 @@ export default function HomeBoxDisplay() {
     removeAllHomeDupes,
     setBoxNameCurrentBank,
     sortAllHomeBoxes,
+    sortAllHomeBoxesLivingDex,
     sortHomeBox,
     switchBoxCurrentBank,
     switchToNextBox,
@@ -213,6 +214,10 @@ export default function HomeBoxDisplay() {
                 <DropdownMenu.Sub>
                   <DropdownMenu.SubTrigger>Sort all boxes...</DropdownMenu.SubTrigger>
                   <DropdownMenu.SubContent>
+                    <DropdownMenu.Item onClick={sortAllHomeBoxesLivingDex}>
+                      By National Living Dex
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Separator />
                     {SortTypes.filter((st) => st !== '').map((sortType) => (
                       <DropdownMenu.Item key={sortType} onClick={() => sortAllHomeBoxes(sortType)}>
                         By {sortType}
@@ -259,7 +264,7 @@ function SingleBoxMonDisplay() {
   const { importMonsToLocation, getPendingMon } = useSaves()
   const { getCurrentBox, getCurrentBank, removeAllHomeDupes } = useBanksAndBoxes()
   const { multiSelectState: dragState, isSelected, toggleSelection } = useMultiSelect()
-  const { sortHomeBox, sortAllHomeBoxes } = useBanksAndBoxes()
+  const { sortHomeBox, sortAllHomeBoxes, sortAllHomeBoxesLivingDex } = useBanksAndBoxes()
   const {
     currentIndex: selectedIndex,
     setCurrentIndex: setSelectedIndex,
@@ -295,12 +300,14 @@ function SingleBoxMonDisplay() {
         )
       ),
       Submenu.label('Sort all boxes...').with(
+        Item.label('By National Living Dex').action(sortAllHomeBoxesLivingDex),
+        Separator,
         ...SortTypes.map((sortType) =>
           Item.label(`By ${sortType}`).action(() => sortAllHomeBoxes(sortType))
         )
       ),
     ],
-    [currentBox, sortAllHomeBoxes, sortHomeBox]
+    [currentBox, sortAllHomeBoxes, sortAllHomeBoxesLivingDex, sortHomeBox]
   )
 
   const removeDupesItem = Item.label('Remove duplicates from this box').action(removeAllHomeDupes)

@@ -116,6 +116,7 @@ export function useSaves(): SavesAndBanksManager {
     // Bulk operations
     moveBoxToBank,
     moveSaveToBank,
+    moveMissingToBank,
   } = useMonLocationsInternal()
 
   const saveFromIdentifier = (identifier: SaveIdentifier) =>
@@ -475,6 +476,7 @@ export function useSaves(): SavesAndBanksManager {
     // Bulk operations
     moveBoxToBank,
     moveSaveToBank,
+    moveMissingToBank,
     moveMonItemToBag,
     giveItemToMon,
     revertMonAbility,

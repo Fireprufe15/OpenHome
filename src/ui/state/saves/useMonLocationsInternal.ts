@@ -1,8 +1,17 @@
 import { PKMInterface } from '@openhome-core/pkm/interfaces'
 import { OhpkmIdentifier } from '@openhome-core/pkm/Lookup'
 import { OHPKM } from '@openhome-core/pkm/OHPKM'
+import { getLivingDexCoordinates, LIVING_DEX_BOX_COUNT } from '@openhome-core/pkm/sort'
+import { NationalDexMax } from '@openhome-core/resources/consts/NationalDex'
 import { SAV, SaveIdentifier } from '@openhome-core/save/interfaces'
-import { $R, Option, PromisedResultBox, R, Result } from '@openhome-core/util/functional'
+import {
+  $R,
+  Option,
+  partitionResults,
+  PromisedResultBox,
+  R,
+  Result,
+} from '@openhome-core/util/functional'
 import { isThenable } from '@openhome-core/util/promise'
 import {
   OPENHOME_BOX_SLOTS,
@@ -413,6 +422,101 @@ export function useMonLocationsInternal() {
     return totalMoved
   }
 
+  const moveMissingToBank = async (
+    save: SAV,
+    targetBankIndex: number,
+    requireDuplicateInSave: boolean
+  ): Promise<MovedPokemonCount> => {
+    let totalMoved = 0
+
+    // Load existing species in target bank
+    const targetBankMons = banksAndBoxes.allMonsInBank(targetBankIndex)
+    const loadResults = await ohpkmStore.tryLoadBatch(Object.keys(targetBankMons))
+    const { successes: bankMons } = partitionResults(Array.from(loadResults.values()))
+    const existingDexNums = new Set<number>()
+    for (const mon of bankMons) {
+      if (!mon.isEgg && mon.nationalDex >= 1 && mon.nationalDex <= NationalDexMax) {
+        existingDexNums.add(mon.nationalDex)
+      }
+    }
+
+    // Collect candidates in save
+    type SaveCandidate = { box: number; boxSlot: number; mon: PKMInterface }
+    const candidatesByDex = new Map<number, SaveCandidate[]>()
+
+    for (let boxIdx = 0; boxIdx < save.getBoxCount(); boxIdx++) {
+      for (let slotIdx = 0; slotIdx < save.boxSlotCount; slotIdx++) {
+        const slotMetadata = save.getSlotMetadata?.(boxIdx, slotIdx)
+        if (slotMetadata?.isDisabled) continue
+
+        const mon = save.getMonAt(boxIdx, slotIdx)
+        if (!mon || mon.isEgg || mon.nationalDex < 1 || mon.nationalDex > NationalDexMax) continue
+        if (existingDexNums.has(mon.nationalDex)) continue
+
+        let list = candidatesByDex.get(mon.nationalDex)
+        if (!list) {
+          list = []
+          candidatesByDex.set(mon.nationalDex, list)
+        }
+        list.push({ box: boxIdx, boxSlot: slotIdx, mon })
+      }
+    }
+
+    const minCountRequired = requireDuplicateInSave ? 2 : 1
+    const selectedMonsToMove: SaveCandidate[] = []
+
+    for (const candidates of candidatesByDex.values()) {
+      if (candidates.length >= minCountRequired) {
+        // Prioritize base forms
+        candidates.sort((a, b) => (a.mon.formIndex ?? 0) - (b.mon.formIndex ?? 0))
+        selectedMonsToMove.push(candidates[0])
+      }
+    }
+
+    selectedMonsToMove.sort((a, b) => a.mon.nationalDex - b.mon.nationalDex)
+
+    // Ensure Living Dex boxes exist in target bank
+    banksAndBoxes.ensureBankBoxCount(targetBankIndex, LIVING_DEX_BOX_COUNT)
+
+    let overflowBox = LIVING_DEX_BOX_COUNT
+    let overflowSlot = 0
+
+    for (const { box: saveBox, boxSlot: saveSlot, mon } of selectedMonsToMove) {
+      const ohpkm = await ohpkmStore.loadOrStartTracking(mon, save, undefined)
+      const { box: dexBox, boxSlot: dexSlot } = getLivingDexCoordinates(
+        mon.nationalDex,
+        OPENHOME_BOX_SLOTS
+      )
+      const targetLocation = { bank: targetBankIndex, box: dexBox, boxSlot: dexSlot }
+
+      if (banksAndBoxes.homeLocationIsEmpty(targetLocation)) {
+        banksAndBoxes.setAtHomeLocation(targetLocation, ohpkm.openhomeId)
+      } else {
+        while (true) {
+          banksAndBoxes.ensureBankBoxCount(targetBankIndex, overflowBox + 1)
+          if (overflowSlot < OPENHOME_BOX_SLOTS) {
+            const loc = { bank: targetBankIndex, box: overflowBox, boxSlot: overflowSlot }
+            if (banksAndBoxes.homeLocationIsEmpty(loc)) {
+              banksAndBoxes.setAtHomeLocation(loc, ohpkm.openhomeId)
+              overflowSlot++
+              break
+            }
+            overflowSlot++
+          } else {
+            overflowSlot = 0
+            overflowBox++
+          }
+        }
+      }
+
+      save.setMonAt(saveBox, saveSlot, undefined)
+      save.updatedBoxSlots.push({ box: saveBox, boxSlot: saveSlot })
+      totalMoved++
+    }
+
+    return totalMoved
+  }
+
   return {
     getMonAtLocation,
     getPendingMon,
@@ -422,6 +526,7 @@ export function useMonLocationsInternal() {
     // Bulk operations
     moveBoxToBank,
     moveSaveToBank,
+    moveMissingToBank,
 
     // Lossy operations
     overwriteMonAtSaveLocation,

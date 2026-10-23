@@ -1,6 +1,12 @@
 import useBackend from '@openhome-core/backend/useBackend'
 import { OhpkmIdentifier } from '@openhome-core/pkm/Lookup'
-import { getSortFunctionNullable } from '@openhome-core/pkm/sort'
+import {
+  getLivingDexCoordinates,
+  getSortFunctionNullable,
+  LIVING_DEX_BOX_COUNT,
+  sortForLivingDex,
+} from '@openhome-core/pkm/sort'
+import { NationalDexMax } from '@openhome-core/resources/consts/NationalDex'
 import {
   BoxMonIdentifiers,
   SimpleOpenHomeBank,
@@ -57,7 +63,13 @@ export type BanksAndBoxesController = BanksAndBoxesState & {
   getBankName: (bankIndex: number) => string
   setCurrentBankName: (name: string | null) => void
   overwriteBoxSlotsCurrentBank: (boxIndex: number, boxSlots: BoxMonIdentifiers) => void
-  overwriteAllBoxSlotsCurrentBank: (boxSlotsByBoxIndex: Map<number, BoxMonIdentifiers>) => void
+  overwriteAllBoxSlotsCurrentBank: (
+    boxSlotsByBoxIndex: Map<number, BoxMonIdentifiers>,
+    minBoxCount?: number
+  ) => void
+  ensureBankBoxCount: (bankIndex: number, minBoxCount: number) => void
+  firstEmptySlotInBankBox: (bankIndex: number, boxIndex: number) => Option<number>
+  allMonsInBank: (bankIndex: number) => LocationsByIdentifier
   getCurrentBox: () => SimpleOpenHomeBox
   setCurrentBox: (boxIndex: number) => void
   getBoxName: (bankIndex: number, boxIndex: number) => string
@@ -149,15 +161,70 @@ export const createBanksAndBoxesStore = (
         overwriteBoxSlotsCurrentBank: (boxIndex: number, boxSlots: BoxMonIdentifiers) =>
           set((state) => {
             requireBoxCurrentBank(state, boxIndex).identifiers = boxSlots
+            state.reverseLookup = buildReverseLookup({
+              banks: state.banks,
+              current_bank: state.currentBankIndex,
+            })
           }),
-        overwriteAllBoxSlotsCurrentBank: (boxSlotsByBoxIndex: Map<number, BoxMonIdentifiers>) =>
+        overwriteAllBoxSlotsCurrentBank: (
+          boxSlotsByBoxIndex: Map<number, BoxMonIdentifiers>,
+          minBoxCount?: number
+        ) =>
           set((state) => {
-            for (const box of requireBank(state, state.currentBankIndex).boxes.values()) {
-              // if an identifiers map is present for this box, overwrite the current with that.
-              // otherwise clear the box
+            const currentBank = requireBank(state, state.currentBankIndex)
+            const maxBoxIndexInSlots =
+              boxSlotsByBoxIndex.size > 0
+                ? Math.max(...Array.from(boxSlotsByBoxIndex.keys()))
+                : -1
+            const targetBoxCount = Math.max(
+              currentBank.boxes.size,
+              maxBoxIndexInSlots + 1,
+              minBoxCount ?? 0
+            )
+
+            while (currentBank.boxes.size < targetBoxCount) {
+              const newBox = buildNewBox(currentBank, null, undefined)
+              currentBank.boxes = rebuildMapWithNewBox(currentBank.boxes, newBox, 'end')
+            }
+
+            for (const box of currentBank.boxes.values()) {
               box.identifiers = boxSlotsByBoxIndex.get(box.index) ?? new Map<number, string>()
             }
+            state.reverseLookup = buildReverseLookup({
+              banks: state.banks,
+              current_bank: state.currentBankIndex,
+            })
           }),
+        ensureBankBoxCount: (bankIndex: number, minBoxCount: number) =>
+          set((state) => {
+            const bank = requireBank(state, bankIndex)
+            while (bank.boxes.size < minBoxCount) {
+              const newBox = buildNewBox(bank, null, undefined)
+              bank.boxes = rebuildMapWithNewBox(bank.boxes, newBox, 'end')
+            }
+          }),
+        firstEmptySlotInBankBox: (bankIndex: number, boxIndex: number): Option<number> => {
+          const box = readonlyState().banks[bankIndex]?.boxes.get(boxIndex)
+          if (!box) return undefined
+          return firstEmptyBoxSlot(box)
+        },
+        allMonsInBank: (bankIndex: number): LocationsByIdentifier => {
+          const locationsByIdentifier: LocationsByIdentifier = {}
+          const bank = readonlyState().banks[bankIndex]
+          if (!bank) return locationsByIdentifier
+
+          bank.boxes.values().forEach((box) =>
+            box.identifiers.entries().forEach(([boxSlot, identifier]) => {
+              locationsByIdentifier[identifier] = {
+                bank: bankIndex,
+                box: box.index,
+                boxSlot,
+              }
+            })
+          )
+
+          return locationsByIdentifier
+        },
         getBankName: (bankIndex: number): string => {
           return bankNameOrDefault(readonlyState().banks[bankIndex])
         },
@@ -290,22 +357,7 @@ export const createBanksAndBoxesStore = (
             removeAllDupes(state.banks)
           }),
         allMonsCurrentBank: (): LocationsByIdentifier => {
-          const locationsByIdentifier: LocationsByIdentifier = {}
-
-          readonlyState()
-            .getCurrentBank()
-            .boxes.values()
-            .forEach((box) =>
-              box.identifiers.entries().forEach(([boxSlot, identifier]) => {
-                locationsByIdentifier[identifier] = {
-                  bank: readonlyState().currentBankIndex,
-                  box: box.index,
-                  boxSlot,
-                }
-              })
-            )
-
-          return locationsByIdentifier
+          return readonlyState().allMonsInBank(readonlyState().currentBankIndex)
         },
         allMonsInBoxCurrentBank: (boxIndex: number): OhpkmIdentifier[] => {
           const box = readonlyState().getCurrentBank().boxes.get(boxIndex)
@@ -528,6 +580,9 @@ export function useBanksAndBoxes() {
   const removeAllHomeDupes = withSelectors.use.removeDupesFromEverywhere()
   const overwriteBoxSlotsCurrentBank = withSelectors.use.overwriteBoxSlotsCurrentBank()
   const overwriteAllBoxSlotsCurrentBank = withSelectors.use.overwriteAllBoxSlotsCurrentBank()
+  const ensureBankBoxCount = withSelectors.use.ensureBankBoxCount()
+  const firstEmptySlotInBankBox = withSelectors.use.firstEmptySlotInBankBox()
+  const allMonsInBank = withSelectors.use.allMonsInBank()
 
   const getMonAtHomeLocation = withSelectors.use.getAtLocation()
   const homeLocationIsEmpty = withSelectors.use.locationIsEmpty()
@@ -625,6 +680,68 @@ export function useBanksAndBoxes() {
     return R.Ok(null)
   }
 
+  async function sortAllHomeBoxesLivingDex(): Promise<
+    Result<null, IdentifierNotPresentError[]>
+  > {
+    const currentBankMons = allMonsInCurrentBankWithLocations()
+    const loadResults = await ohpkmStore.tryLoadBatch(Object.keys(currentBankMons))
+    const { successes: allMons, failures } = partitionResults(Array.from(loadResults.values()))
+
+    if (failures.length) {
+      failures.forEach((failure) => {
+        const location = currentBankMons[failure.identifier]
+        console.error(
+          `Pokémon cannot be found: ${failure.identifier} (location: box ${location.box}/slot ${location.boxSlot})`
+        )
+      })
+    }
+
+    const sorted = allMons.toSorted(sortForLivingDex)
+    const newBoxSlotsByIndex: Map<number, BoxMonIdentifiers> = new Map()
+    const seenDexNumbers = new Set<number>()
+    const overflowIds: OhpkmIdentifier[] = []
+
+    for (const mon of sorted) {
+      if (
+        !mon.isEgg &&
+        mon.nationalDex >= 1 &&
+        mon.nationalDex <= NationalDexMax &&
+        !seenDexNumbers.has(mon.nationalDex)
+      ) {
+        seenDexNumbers.add(mon.nationalDex)
+        const { box, boxSlot } = getLivingDexCoordinates(mon.nationalDex, OPENHOME_BOX_SLOTS)
+        let boxMap = newBoxSlotsByIndex.get(box)
+        if (!boxMap) {
+          boxMap = new Map()
+          newBoxSlotsByIndex.set(box, boxMap)
+        }
+        boxMap.set(boxSlot, mon.openhomeId)
+      } else {
+        overflowIds.push(mon.openhomeId)
+      }
+    }
+
+    overflowIds.forEach((id, idx) => {
+      const box = LIVING_DEX_BOX_COUNT + Math.floor(idx / OPENHOME_BOX_SLOTS)
+      const boxSlot = idx % OPENHOME_BOX_SLOTS
+      let boxMap = newBoxSlotsByIndex.get(box)
+      if (!boxMap) {
+        boxMap = new Map()
+        newBoxSlotsByIndex.set(box, boxMap)
+      }
+      boxMap.set(boxSlot, id)
+    })
+
+    const requiredBoxes = Math.max(
+      getCurrentBank().boxes.size,
+      LIVING_DEX_BOX_COUNT + Math.ceil(overflowIds.length / OPENHOME_BOX_SLOTS)
+    )
+
+    overwriteAllBoxSlotsCurrentBank(newBoxSlotsByIndex, requiredBoxes)
+
+    return R.Ok(null)
+  }
+
   // adds the necessary boxes to contain the given ids, and returns the index of the first created box
   function addBoxesWithIds(ids: OhpkmIdentifier[], boxName?: string): Option<number> {
     if (ids.length === 0) return undefined
@@ -672,6 +789,7 @@ export function useBanksAndBoxes() {
     getCurrentBox,
     sortHomeBox,
     sortAllHomeBoxes,
+    sortAllHomeBoxesLivingDex,
     removeAllHomeDupes,
 
     switchBoxCurrentBank,
@@ -688,6 +806,9 @@ export function useBanksAndBoxes() {
 
     allMonsInCurrentBank,
     allMonsInHomeBoxCurrentBank,
+    allMonsInBank,
     firstHomeBoxEmptySlot,
+    firstEmptySlotInBankBox,
+    ensureBankBoxCount,
   }
 }
