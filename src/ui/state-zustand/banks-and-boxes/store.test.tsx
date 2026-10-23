@@ -1,4 +1,9 @@
 // import userEvent from '@testing-library/user-event'
+import {
+  getLivingDexCoordinates,
+  LIVING_DEX_BOX_COUNT,
+  sortForLivingDex,
+} from '@openhome-core/pkm/sort'
 import { SimpleOpenHomeBox, StoredBankData } from '@openhome-core/save/util/storage'
 import { R, range } from '@openhome-core/util/functional'
 import { v4 as UuidV4 } from 'uuid'
@@ -98,6 +103,75 @@ describe('box deletion', () => {
     expect(store.getState().getCurrentBank().boxes.get(2)?.id).not.toBe(thirdBoxId)
 
     assertIndicesMatchKeys(store.getState().getCurrentBank().boxes)
+  })
+})
+
+describe('living dex coordinates and sorting', () => {
+  test('living dex box count is 9', () => {
+    expect(LIVING_DEX_BOX_COUNT).toBe(9)
+  })
+
+  test('calculates correct box and slot coordinates for living dex', () => {
+    expect(getLivingDexCoordinates(1)).toEqual({ box: 0, boxSlot: 0 })
+    expect(getLivingDexCoordinates(120)).toEqual({ box: 0, boxSlot: 119 })
+    expect(getLivingDexCoordinates(121)).toEqual({ box: 1, boxSlot: 0 })
+    expect(getLivingDexCoordinates(1025)).toEqual({ box: 8, boxSlot: 64 })
+  })
+
+  test('sorts living dex prioritizing non-eggs, dex number, and base forms', () => {
+    const mons = [
+      { nationalDex: 25, formIndex: 1, nickname: 'Pikachu Cap', isEgg: false } as any,
+      { nationalDex: 25, formIndex: 0, nickname: 'Pikachu', isEgg: false } as any,
+      { nationalDex: 1, formIndex: 0, nickname: 'Bulbasaur', isEgg: true } as any,
+      { nationalDex: 1, formIndex: 0, nickname: 'Bulbasaur', isEgg: false } as any,
+      { nationalDex: 4, formIndex: 0, nickname: 'Charmander', isEgg: false } as any,
+    ]
+
+    const sorted = mons.toSorted(sortForLivingDex)
+    expect(sorted.map((m) => m.nickname)).toEqual([
+      'Bulbasaur',
+      'Charmander',
+      'Pikachu',
+      'Pikachu Cap',
+      'Bulbasaur', // Egg goes last
+    ])
+  })
+})
+
+describe('bank expansion and bulk overwrite', () => {
+  test('ensureBankBoxCount expands boxes up to minBoxCount', () => {
+    const store = buildTestStore()
+    expect(store.getState().getCurrentBank().boxes.size).toBe(10)
+
+    store.getState().ensureBankBoxCount(0, 15)
+    expect(store.getState().getCurrentBank().boxes.size).toBe(15)
+    assertIndicesMatchKeys(store.getState().getCurrentBank().boxes)
+  })
+
+  test('overwriteAllBoxSlotsCurrentBank expands boxes and updates reverse lookup', () => {
+    const store = buildTestStore()
+    const newSlots = new Map<number, Map<number, string>>()
+    const box0 = new Map<number, string>()
+    box0.set(0, 'ohpkm-bulbasaur')
+    newSlots.set(0, box0)
+
+    store.getState().overwriteAllBoxSlotsCurrentBank(newSlots, 12)
+    expect(store.getState().getCurrentBank().boxes.size).toBe(12)
+    expect(store.getState().getCurrentBank().boxes.get(0)?.identifiers.get(0)).toBe('ohpkm-bulbasaur')
+    expect(store.getState().findHomeLocation('ohpkm-bulbasaur')).toEqual({
+      bank: 0,
+      box: 0,
+      boxSlot: 0,
+    })
+  })
+
+  test('allMonsInBank and firstEmptySlotInBankBox', () => {
+    const store = buildTestStore()
+    store.getState().setAtLocation({ bank: 0, box: 0, boxSlot: 0 }, 'mon-1')
+
+    const bankMons = store.getState().allMonsInBank(0)
+    expect(bankMons['mon-1']).toEqual({ bank: 0, box: 0, boxSlot: 0 })
+    expect(store.getState().firstEmptySlotInBankBox(0, 0)).toBe(1)
   })
 })
 
