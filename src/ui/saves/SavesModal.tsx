@@ -54,6 +54,7 @@ const SavesModal = (props: SavesModalProps) => {
     <Dialog.Container
       open={open}
       onOpenChange={(open) => !open && onClose?.()}
+      className="deck-saves-modal"
       style={{
         width: '95vw',
         minWidth: 800,

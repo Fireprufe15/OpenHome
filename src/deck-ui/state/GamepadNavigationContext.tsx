@@ -25,6 +25,15 @@ import {
 } from 'react'
 import { DeckPane, GridCoord, HeldMonPayload, LassoArea } from '../gamepad/types'
 import { useGamepadInput } from '../gamepad/useGamepadInput'
+import {
+  autoFocusDialogElements,
+  getTopmostOpenDialog,
+  handlePokemonDetailsModalAction,
+  handlePopupDialogAction,
+  handleSavesModalAction,
+} from '../gamepad/modalDomNavigation'
+
+export type ActiveModalKind = 'none' | 'saves' | 'details' | 'popup'
 
 export interface QuickMenuItem {
   id: string
@@ -62,6 +71,8 @@ interface GamepadNavigationContextType {
 
   saveModalOpen: boolean
   setSaveModalOpen: (open: boolean) => void
+
+  activeModalKind: ActiveModalKind
 
   quickMenuOpen: boolean
   setQuickMenuOpen: (open: boolean) => void
@@ -156,10 +167,62 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
   const [lassoAnchor, setLassoAnchor] = useState<GridCoord | null>(null)
   const [detailsModalMon, setDetailsModalMon] = useState<PKMInterface | null>(null)
   const [saveModalOpen, setSaveModalOpen] = useState(false)
+  const [activeModalKind, setActiveModalKind] = useState<ActiveModalKind>('none')
   const [quickMenuOpen, setQuickMenuOpen] = useState(false)
   const [quickMenuIndex, setQuickMenuIndex] = useState(0)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Auto-focus and modal state detection for open dialogs and SavesModal
+  useEffect(() => {
+    if (!deckModeEnabled) return
+
+    const updateModalState = () => {
+      const dialog = getTopmostOpenDialog()
+      if (dialog) {
+        autoFocusDialogElements(dialog)
+        if (dialog.classList.contains('deck-saves-modal') || saveModalOpen) {
+          setActiveModalKind('saves')
+        } else if (dialog.classList.contains('pokemon-modal') || detailsModalMon !== null) {
+          setActiveModalKind('details')
+        } else {
+          setActiveModalKind('popup')
+        }
+      } else {
+        if (saveModalOpen) {
+          setActiveModalKind('saves')
+        } else if (detailsModalMon !== null) {
+          setActiveModalKind('details')
+        } else {
+          setActiveModalKind('none')
+        }
+      }
+    }
+
+    updateModalState()
+
+    const observer = new MutationObserver(() => {
+      updateModalState()
+    })
+
+    if (typeof document !== 'undefined' && document.body) {
+      observer.observe(document.body, { childList: true, subtree: true })
+    }
+
+    return () => observer.disconnect()
+  }, [deckModeEnabled, saveModalOpen, detailsModalMon])
+
+  // When a new save file is opened in Deck Mode, switch active save to the newly opened save
+  const prevSavesCountRef = useRef(allOpenSaves.length)
+  useEffect(() => {
+    if (allOpenSaves.length > prevSavesCountRef.current) {
+      setActiveSaveIndex(allOpenSaves.length - 1)
+      setActivePane('save')
+    } else if (activeSaveIndex >= allOpenSaves.length && allOpenSaves.length > 0) {
+      setActiveSaveIndex(Math.max(0, allOpenSaves.length - 1))
+    }
+    prevSavesCountRef.current = allOpenSaves.length
+  }, [allOpenSaves.length, activeSaveIndex])
 
   const showStatus = useCallback((msg: string) => {
     setStatusMessage(msg)
@@ -600,6 +663,21 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
         },
       },
       {
+        id: 'switch-save',
+        label: `Switch Active Save (${activeSave ? `${activeSave.gameNameFull} - ${activeSave.name}` : 'None'})`,
+        description:
+          allOpenSaves.length > 1
+            ? `Cycles to next open save (${((activeSaveIndex + 1) % allOpenSaves.length) + 1} of ${allOpenSaves.length}).`
+            : 'Only 1 save file is currently open.',
+        disabled: allOpenSaves.length <= 1,
+        action: () => {
+          if (allOpenSaves.length <= 1) return
+          const nextIdx = (activeSaveIndex + 1) % allOpenSaves.length
+          setActiveSaveIndex(nextIdx)
+          showStatus(`Switched to ${allOpenSaves[nextIdx].gameNameFull}`)
+        },
+      },
+      {
         id: 'open-save',
         label: 'Open / Add Game Save File...',
         description: 'Opens the save file selector modal.',
@@ -621,6 +699,8 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
     getCurrentBank,
     getCurrentBox,
     activeSave,
+    allOpenSaves,
+    activeSaveIndex,
     banks,
     sortAllHomeBoxesLivingDex,
     moveMissingToBank,
@@ -804,14 +884,38 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
         return
       }
 
-      // When a modal is open, only allow cancel or summary toggle
-      if (detailsModalMon || saveModalOpen) {
-        if (action === 'cancel') {
-          handleCancelAction()
-        } else if (action === 'summary' && detailsModalMon) {
-          setDetailsModalMon(null)
-        } else if (action === 'openSave' && saveModalOpen) {
+      // Check if any popup dialog or modal is open in the DOM
+      const topmostDialog = getTopmostOpenDialog()
+      if (topmostDialog) {
+        const isSaves = topmostDialog.classList.contains('deck-saves-modal') || saveModalOpen
+        const isDetails =
+          topmostDialog.classList.contains('pokemon-modal') || detailsModalMon !== null
+
+        if (isSaves) {
+          handleSavesModalAction(topmostDialog, action, () => setSaveModalOpen(false))
+          return
+        }
+
+        if (isDetails) {
+          handlePokemonDetailsModalAction(topmostDialog, action, () => setDetailsModalMon(null))
+          return
+        }
+
+        // Standard popup dialog (Changes Saved, Release confirmation, ErrorMessageModal, etc.)
+        handlePopupDialogAction(topmostDialog, action)
+        return
+      }
+
+      // If no dialog element found yet in DOM but state says saveModalOpen or detailsModalMon:
+      if (saveModalOpen) {
+        if (action === 'cancel' || action === 'openSave') {
           setSaveModalOpen(false)
+        }
+        return
+      }
+      if (detailsModalMon) {
+        if (action === 'cancel' || action === 'summary') {
+          setDetailsModalMon(null)
         }
         return
       }
@@ -948,6 +1052,7 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
       setDetailsModalMon,
       saveModalOpen,
       setSaveModalOpen,
+      activeModalKind,
       quickMenuOpen,
       setQuickMenuOpen,
       quickMenuIndex,
@@ -975,6 +1080,7 @@ export function GamepadNavigationProvider({ children }: { children: ReactNode })
       lassoArea,
       detailsModalMon,
       saveModalOpen,
+      activeModalKind,
       quickMenuOpen,
       quickMenuIndex,
       quickMenuItems,

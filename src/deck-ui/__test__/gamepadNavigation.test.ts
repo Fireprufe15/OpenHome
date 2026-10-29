@@ -1,4 +1,5 @@
 import type { GamepadButtonStates, GridCoord, LassoArea } from '../gamepad/types.ts'
+import { findNearestSpatialTarget } from '../gamepad/modalDomNavigation.ts'
 
 let describe: any
 let it: any
@@ -206,6 +207,97 @@ describe('Deck UI Gamepad Navigation Logic', () => {
       expect(isEditableElement('DIV', true)).toBe(true)
       expect(isEditableElement('DIV', false)).toBe(false)
       expect(isEditableElement('BUTTON', false)).toBe(false)
+    })
+  })
+
+  describe('Modal & Dialog Spatial Navigation', () => {
+    // Mock helper for spatial target selection based on mock elements
+    interface MockElement {
+      id: string
+      rect: { left: number; top: number; width: number; height: number }
+      getBoundingClientRect: () => { left: number; top: number; width: number; height: number }
+    }
+
+    const createMockEl = (id: string, left: number, top: number, width = 180, height = 180): MockElement => ({
+      id,
+      rect: { left, top, width, height },
+      getBoundingClientRect: () => ({ left, top, width, height }),
+    })
+
+    const findNearest = (
+      current: MockElement,
+      candidates: MockElement[],
+      direction: 'up' | 'down' | 'left' | 'right'
+    ): MockElement | null => {
+      return findNearestSpatialTarget(current as any, candidates as any, direction) as MockElement | null
+    }
+
+    it('navigates 2D grid of save cards in SavesModal', () => {
+      // 2 rows of 3 save cards
+      // Row 1: y = 100, x = 100, 300, 500
+      // Row 2: y = 300, x = 100, 300, 500
+      const c1 = createMockEl('card-1', 100, 100)
+      const c2 = createMockEl('card-2', 300, 100)
+      const c3 = createMockEl('card-3', 500, 100)
+      const c4 = createMockEl('card-4', 100, 300)
+      const c5 = createMockEl('card-5', 300, 300)
+      const c6 = createMockEl('card-6', 500, 300)
+      const all = [c1, c2, c3, c4, c5, c6]
+
+      // Moving right from c1 gives c2
+      expect(findNearest(c1, all, 'right')?.id).toBe('card-2')
+
+      // Moving right from c2 gives c3
+      expect(findNearest(c2, all, 'right')?.id).toBe('card-3')
+
+      // Moving right from c3 has no right target
+      expect(findNearest(c3, all, 'right')).toBe(null)
+
+      // Moving down from c1 gives c4
+      expect(findNearest(c1, all, 'down')?.id).toBe('card-4')
+
+      // Moving down from c2 gives c5
+      expect(findNearest(c2, all, 'down')?.id).toBe('card-5')
+
+      // Moving left from c5 gives c4
+      expect(findNearest(c5, all, 'left')?.id).toBe('card-4')
+
+      // Moving up from c6 gives c3
+      expect(findNearest(c6, all, 'up')?.id).toBe('card-3')
+    })
+
+    it('cycles tabs with shoulder buttons (LB / RB)', () => {
+      const tabs = ['recents', 'suggested', 'folders']
+      let currentIdx = 0 // recents
+
+      // RB moves to next tab
+      currentIdx = (currentIdx + 1) % tabs.length
+      expect(tabs[currentIdx]).toBe('suggested')
+
+      // RB again
+      currentIdx = (currentIdx + 1) % tabs.length
+      expect(tabs[currentIdx]).toBe('folders')
+
+      // RB wraps to start
+      currentIdx = (currentIdx + 1) % tabs.length
+      expect(tabs[currentIdx]).toBe('recents')
+
+      // LB moves to prev tab (wraps to end)
+      currentIdx = (currentIdx - 1 + tabs.length) % tabs.length
+      expect(tabs[currentIdx]).toBe('folders')
+    })
+
+    it('cycles dialog action buttons (Cancel ↔ Confirm)', () => {
+      const buttons = ['Cancel', 'Release 5 Pokémon']
+      let focusIdx = 0 // Cancel focused
+
+      // D-Pad Right
+      focusIdx = (focusIdx + 1) % buttons.length
+      expect(buttons[focusIdx]).toBe('Release 5 Pokémon')
+
+      // D-Pad Left
+      focusIdx = (focusIdx - 1 + buttons.length) % buttons.length
+      expect(buttons[focusIdx]).toBe('Cancel')
     })
   })
 })

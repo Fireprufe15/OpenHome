@@ -29,6 +29,9 @@ export default function ErrorMessageModal() {
             ))}
             {errorState.messageData && <InfoGrid data={errorState.messageData.data} />}
           </OhoFlex.ColFullHeight>
+          <AlertDialog.Actions>
+            <AlertDialog.Close data-color="theme">Ok</AlertDialog.Close>
+          </AlertDialog.Actions>
         </AlertDialog.Popup>
       </AlertDialog.Portal>
     </AlertDialog.Root>

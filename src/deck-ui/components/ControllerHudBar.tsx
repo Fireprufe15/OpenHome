@@ -1,10 +1,67 @@
 import { useGamepadNavigation } from '../state/GamepadNavigationContext'
 
 export default function ControllerHudBar() {
-  const { heldPayload, activePane, bankZoomed, activeCursor, quickMenuOpen } =
+  const { heldPayload, activePane, bankZoomed, activeCursor, quickMenuOpen, activeModalKind } =
     useGamepadNavigation()
 
   const isHeaderFocused = activeCursor.row === -1
+
+  if (activeModalKind === 'saves') {
+    return (
+      <div className="deck-hud-bar">
+        <div className="deck-hud-item">
+          <span className="deck-glyph deck-glyph-pill">LB / RB</span>
+          <span>Switch Tab (Recents / Suggested / Folders)</span>
+        </div>
+        <div className="deck-hud-item">
+          <span className="deck-glyph deck-glyph-pill">D-Pad</span>
+          <span>Navigate Saves</span>
+        </div>
+        <div className="deck-hud-item">
+          <span className="deck-glyph deck-glyph-a">A</span>
+          <span>Open Save</span>
+        </div>
+        <div className="deck-hud-item">
+          <span className="deck-glyph deck-glyph-b">B</span>
+          <span>Close</span>
+        </div>
+      </div>
+    )
+  }
+
+  if (activeModalKind === 'popup') {
+    return (
+      <div className="deck-hud-bar">
+        <div className="deck-hud-item">
+          <span className="deck-glyph deck-glyph-pill">D-Pad</span>
+          <span>Select Option</span>
+        </div>
+        <div className="deck-hud-item">
+          <span className="deck-glyph deck-glyph-a">A</span>
+          <span>Confirm / OK</span>
+        </div>
+        <div className="deck-hud-item">
+          <span className="deck-glyph deck-glyph-b">B</span>
+          <span>Cancel / Dismiss</span>
+        </div>
+      </div>
+    )
+  }
+
+  if (activeModalKind === 'details') {
+    return (
+      <div className="deck-hud-bar">
+        <div className="deck-hud-item">
+          <span className="deck-glyph deck-glyph-pill">LB / RB</span>
+          <span>Switch Page / Tab</span>
+        </div>
+        <div className="deck-hud-item">
+          <span className="deck-glyph deck-glyph-b">B / X</span>
+          <span>Close Details</span>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="deck-hud-bar">

@@ -539,3 +539,36 @@
   font-size: 0.76rem;
   color: #94a3b8;
 }
+
+/* --- Controller Focus Indicator in Modals and Popup Dialogs --- */
+.deck-modal-focused {
+  border-color: #38bdf8 !important;
+  outline: 3px solid #38bdf8 !important;
+  outline-offset: 2px !important;
+  box-shadow:
+    0 0 0 2px #38bdf8,
+    0 0 16px rgba(56, 189, 248, 0.8) !important;
+  transform: scale(1.04);
+  z-index: 20 !important;
+  transition:
+    transform 0.1s ease,
+    box-shadow 0.1s ease,
+    border-color 0.1s ease;
+}
+
+/* Save cards focus highlight in SavesModal */
+button.save-card.deck-modal-focused {
+  border-color: #38bdf8 !important;
+  box-shadow:
+    0 0 0 3px #38bdf8,
+    0 0 20px rgba(56, 189, 248, 0.85) !important;
+  transform: scale(1.05) !important;
+}
+
+/* Tab button focus highlight */
+button.side-tab.deck-modal-focused {
+  background-color: rgba(56, 189, 248, 0.25) !important;
+  border-left: 3px solid #38bdf8 !important;
+  color: #fff !important;
+}
+
